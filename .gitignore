@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.venv/
+venv/
+.env
+
+# Jupyter
+.ipynb_checkpoints/
+
+# OS
+.DS_Store
+
+# Data & outputs (do not commit)
+data/
+output/
+*.tif
+*.tiff
+*.zarr
+*.h5
+*.h5ad
+*.ome.tif
