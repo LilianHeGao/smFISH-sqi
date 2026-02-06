@@ -1,0 +1,101 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Dict, Tuple
+
+import numpy as np
+import matplotlib.pyplot as plt
+
+
+@dataclass
+class QC1Config:
+    """
+    First SQI QC plot: per-cell foreground vs background signal ratio.
+
+    Forward-looking:
+    - Works with any 'RNA-like' intensity image (raw, filtered, or decoded channel).
+    - Later you can swap intensity for spot counts, PSF-fit confidence, etc.
+    """
+    eps: float = 1e-6
+    min_bg_mean: float = 0.0  # you may set to >0 to avoid log blowups
+    out_png: str = "sqi_qc1_fg_bg_ratio.png"
+
+
+def compute_per_cell_stats(
+    intensity: np.ndarray,
+    nuclei_labels: np.ndarray,
+    fg_label_map: np.ndarray,
+    bg_label_map: np.ndarray,
+) -> Dict[str, np.ndarray]:
+    """
+    Per-cell means in FG and BG and derived metrics.
+
+    Returns arrays indexed by label id (1..N). Index 0 is unused.
+    """
+    if intensity.ndim != 2:
+        raise ValueError("intensity must be 2D")
+    if nuclei_labels.shape != intensity.shape:
+        raise ValueError("shape mismatch: intensity vs labels")
+
+    n = int(nuclei_labels.max())
+    fg_sum = np.zeros(n + 1, dtype=np.float64)
+    fg_cnt = np.zeros(n + 1, dtype=np.int64)
+    bg_sum = np.zeros(n + 1, dtype=np.float64)
+    bg_cnt = np.zeros(n + 1, dtype=np.int64)
+
+    fg_ids = fg_label_map.ravel()
+    bg_ids = bg_label_map.ravel()
+    vals = intensity.ravel().astype(np.float64, copy=False)
+
+    # Accumulate FG
+    m = fg_ids > 0
+    np.add.at(fg_sum, fg_ids[m], vals[m])
+    np.add.at(fg_cnt, fg_ids[m], 1)
+
+    # Accumulate BG
+    m = bg_ids > 0
+    np.add.at(bg_sum, bg_ids[m], vals[m])
+    np.add.at(bg_cnt, bg_ids[m], 1)
+
+    fg_mean = fg_sum / np.maximum(fg_cnt, 1)
+    bg_mean = bg_sum / np.maximum(bg_cnt, 1)
+
+    return {
+        "fg_mean": fg_mean[1:],
+        "bg_mean": bg_mean[1:],
+        "fg_cnt": fg_cnt[1:],
+        "bg_cnt": bg_cnt[1:],
+    }
+
+
+def plot_qc1(stats: Dict[str, np.ndarray], cfg: QC1Config) -> Tuple[plt.Figure, Dict[str, float]]:
+    fg = stats["fg_mean"]
+    bg = stats["bg_mean"]
+
+    bg_safe = np.maximum(bg, cfg.min_bg_mean)
+    ratio = (fg + cfg.eps) / (bg_safe + cfg.eps)
+    log2_ratio = np.log2(ratio)
+
+    fig = plt.figure(figsize=(10, 4.5), dpi=160)
+
+    ax1 = fig.add_subplot(1, 2, 1)
+    ax1.hist(log2_ratio, bins=60)
+    ax1.set_title("SQI QC1: log2(FG/BG) per nucleus")
+    ax1.set_xlabel("log2(FG/BG)")
+    ax1.set_ylabel("Count")
+
+    ax2 = fig.add_subplot(1, 2, 2)
+    ax2.scatter(bg, fg, s=6, alpha=0.6)
+    ax2.set_title("Foreground vs Background mean intensity")
+    ax2.set_xlabel("BG mean")
+    ax2.set_ylabel("FG mean")
+
+    fig.tight_layout()
+
+    summary = {
+        "n_cells": float(len(fg)),
+        "median_log2_fg_bg": float(np.median(log2_ratio)),
+        "p10_log2_fg_bg": float(np.quantile(log2_ratio, 0.10)),
+        "p90_log2_fg_bg": float(np.quantile(log2_ratio, 0.90)),
+    }
+    return fig, summary
