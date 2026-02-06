@@ -1,29 +1,14 @@
 from __future__ import annotations
 
+import numpy as np
 from dataclasses import dataclass
 from typing import Optional, Tuple, Dict, Any
-
-import numpy as np
-
-# cellpose import is intentionally inside functions where possible,
-# to keep import-time failures localized (useful in mixed CPU/GPU setups).
 
 
 @dataclass
 class CellposeNucleiConfig:
-    """
-    Cellpose config for nuclei segmentation.
-
-    Key design choices:
-    - model_type defaults to 'nuclei' (robust for DAPI-like channels).
-    - channels follow Cellpose convention:
-        (0,0) = grayscale (single channel)
-        (nuclei_channel, cytoplasm_channel) otherwise
-    - diameter can be None (auto) but for consistent QC benchmarking
-      you usually want to lock it once estimated.
-    """
     model_type: str = "nuclei"
-    use_gpu: Optional[bool] = None   # None -> auto
+    use_gpu: Optional[bool] = None
     diameter: Optional[float] = None
     channels: Tuple[int, int] = (0, 0)
     flow_threshold: float = 0.4
@@ -33,14 +18,6 @@ class CellposeNucleiConfig:
 
 
 class CellposeBackend:
-    """
-    A thin wrapper around Cellpose with stable I/O:
-    input  : 2D image (H,W) float/uint
-    output : labels (H,W) int32, + metadata dict
-
-    This wrapper isolates Cellpose specifics so downstream QC code stays model-agnostic.
-    """
-
     def __init__(self, cfg: CellposeNucleiConfig):
         self.cfg = cfg
         self._model = None
@@ -48,8 +25,6 @@ class CellposeBackend:
 
     @staticmethod
     def _auto_gpu() -> bool:
-        # Conservative auto-detect: let Cellpose decide if GPU is usable.
-        # This avoids hard-coding torch/cuda logic here.
         try:
             from cellpose import core
             return bool(core.use_gpu())
@@ -68,27 +43,21 @@ class CellposeBackend:
         self._resolved_gpu = use_gpu
 
         from cellpose import models
-        self._model = models.Cellpose(gpu=use_gpu, model_type=self.cfg.model_type)
+        self._model = models.CellposeModel(
+            gpu=use_gpu,
+            model_type=self.cfg.model_type,
+        )
         return self._model
 
-    def segment_nuclei(self, img: np.ndarray) -> Tuple[np.ndarray, Dict[str, Any]]:
-        """
-        Segment nuclei from a single 2D image.
-
-        Returns
-        -------
-        labels : (H,W) int32, 0=background, 1..N nuclei ids
-        meta   : dict containing parameters and basic QC stats
-        """
+    def segment_nuclei(self, img: np.ndarray):
         if img.ndim != 2:
-            raise ValueError(f"Expected 2D image (H,W), got shape={img.shape}")
+            raise ValueError(f"Expected 2D image, got shape={img.shape}")
 
         model = self._get_model()
 
-        # Cellpose works best with float32
         img_f = img.astype(np.float32, copy=False)
 
-        masks, flows, styles, diams = model.eval(
+        out = model.eval(
             img_f,
             diameter=self.cfg.diameter,
             channels=self.cfg.channels,
@@ -97,6 +66,14 @@ class CellposeBackend:
             stitch_threshold=self.cfg.stitch_threshold,
             batch_size=self.cfg.batch_size,
         )
+
+        # Cellpose v3: (masks, flows, styles, diams)
+        # Cellpose v4+: (masks, flows, styles)
+        if len(out) == 4:
+            masks, flows, styles, diams = out
+        else:
+            masks, flows, styles = out
+            diams = None
 
         labels = masks.astype(np.int32, copy=False)
 
@@ -110,4 +87,5 @@ class CellposeBackend:
             "n_nuclei": int(labels.max()),
             "img_shape": tuple(labels.shape),
         }
+
         return labels, meta

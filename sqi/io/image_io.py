@@ -6,6 +6,82 @@ import tifffile as tiff
 
 import zarr
 
+import os
+from dask import array as da
+
+
+def read_dapi_from_conv_zarr(
+    zarr_path: str,
+    channel: int = -1,
+    z_project: str = "max",
+) -> np.ndarray:
+    """
+    Read DAPI from MERFISH Conv Zarr layout (Bintu/Bogdan style).
+
+    Expected layout:
+        Conv_zscanXXX.zarr   (metadata only)
+        Conv_zscanXXX/       (directory)
+            └── data/        (Zarr array)
+
+    Parameters
+    ----------
+    zarr_path : str
+        Path to Conv_zscanXXX.zarr
+    channel : int
+        DAPI channel index (default: -1)
+    z_project : {"max", "mean"}
+
+    Returns
+    -------
+    dapi_2d : (Y, X) float32
+    """
+    dirname = os.path.dirname(zarr_path)
+    fov = os.path.basename(zarr_path).split("_")[-1].split(".")[0]
+
+    data_path = os.path.join(dirname, fov, "data")
+
+    if not os.path.exists(data_path):
+        raise FileNotFoundError(f"Expected data directory not found: {data_path}")
+
+    # Load lazily (dask), skip first frame as in original pipeline
+    image = da.from_zarr(data_path)[1:]
+
+    shape = image.shape
+    xml_file = os.path.join(dirname, os.path.basename(zarr_path).split(".")[0] + ".xml")
+
+    if os.path.exists(xml_file):
+        txt = open(xml_file, "r").read()
+
+        tag = "<z_offsets type=\"string\">"
+        zstack = txt.split(tag)[-1].split("</")[0]
+
+        nchannels = int(zstack.split(":")[-1])
+
+        nzs = (shape[0] // nchannels) * nchannels
+        image = image[:nzs]
+
+        # reshape → (Z, C, Y, X) → (C, Z, Y, X)
+        image = image.reshape(
+            shape[0] // nchannels,
+            nchannels,
+            shape[-2],
+            shape[-1],
+        ).swapaxes(0, 1)
+    else:
+        raise RuntimeError("XML metadata not found — cannot infer channel/Z layout")
+
+    # Select DAPI channel
+    dapi = image[channel]
+
+    # Z projection
+    if z_project == "max":
+        dapi_2d = dapi.max(axis=0)
+    elif z_project == "mean":
+        dapi_2d = dapi.mean(axis=0)
+    else:
+        raise ValueError(f"Unknown z_project: {z_project}")
+
+    return dapi_2d.compute().astype(np.float32, copy=False)
 
 def read_tif_2d(path: str) -> np.ndarray:
     img = tiff.imread(path)
