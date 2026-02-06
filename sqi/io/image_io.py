@@ -4,6 +4,8 @@ from typing import Tuple
 import numpy as np
 import tifffile as tiff
 
+import zarr
+
 
 def read_tif_2d(path: str) -> np.ndarray:
     img = tiff.imread(path)
@@ -18,13 +20,6 @@ def read_tif_2d(path: str) -> np.ndarray:
 
 def write_labels_tif(path: str, labels: np.ndarray) -> None:
     tiff.imwrite(path, labels.astype(np.int32), compression="zlib")
-
-from __future__ import annotations
-
-import numpy as np
-import zarr
-from typing import Optional
-
 
 def read_dapi_from_zarr(
     zarr_path: str,
