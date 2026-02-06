@@ -18,10 +18,12 @@ class RingConfig:
     - Background (BG): a ring outside nucleus:
         between bg_inner_px and bg_outer_px from the nucleus boundary
     - Exclude overlaps with other nuclei to prevent contamination.
+    - cell_zone_px: radius around any nucleus considered "cell-associated"
     """
     fg_dilate_px: int = 3
     bg_inner_px: int = 6
     bg_outer_px: int = 20
+    cell_zone_px: int = 12
 
 
 def _disk_radius_mask(radius: int) -> np.ndarray:
@@ -41,8 +43,6 @@ def build_fg_bg_masks(
     Also returns summary stats for bookkeeping.
 
     Outputs are boolean masks (H,W).
-
-    Note: For per-cell QC, we’ll compute per-label FG/BG later by masking with label id.
     """
     if nuclei_labels.ndim != 2:
         raise ValueError("nuclei_labels must be 2D")
@@ -53,19 +53,27 @@ def build_fg_bg_masks(
 
     nuclei_bin = labels > 0
 
-    # FG: dilate nuclei
-    fg = ndi.binary_dilation(nuclei_bin, structure=_disk_radius_mask(cfg.fg_dilate_px))
+    # --- FG: dilate nuclei ---
+    fg = ndi.binary_dilation(
+        nuclei_bin,
+        structure=_disk_radius_mask(cfg.fg_dilate_px),
+    )
 
-    # BG ring: distance from nuclei boundary
-    # Use distance transform on background to compute distance to nearest nucleus pixel.
+    # --- distance to nearest nucleus ---
     dist_to_nuclei = ndi.distance_transform_edt(~nuclei_bin)
 
+    # --- cell-associated zone (union across nuclei) ---
+    cell_zone = ndi.binary_dilation(
+        nuclei_bin,
+        structure=_disk_radius_mask(cfg.cell_zone_px),
+    )
+
+    # --- BG ring ---
     bg = (dist_to_nuclei >= cfg.bg_inner_px) & (dist_to_nuclei <= cfg.bg_outer_px)
-
-    # Exclude any pixels that belong to nuclei or FG (keep BG clean)
     bg &= ~fg
+    bg &= ~cell_zone
 
-    # Optional: remove boundary pixels to reduce edge effects (sometimes helps)
+    # remove label boundaries to avoid edge artifacts
     boundaries = find_boundaries(labels, mode="thick")
     bg &= ~boundaries
 
@@ -76,6 +84,7 @@ def build_fg_bg_masks(
         "img_h": H,
         "img_w": W,
     }
+
     return fg, bg, stats
 
 
@@ -89,18 +98,13 @@ def per_cell_fg_bg(
 
     For FG per cell: pixels in fg_union that are closest to that nucleus label
     For BG per cell: pixels in bg_union that are closest to that nucleus label
-
-    Implementation:
-    - Compute nearest nucleus label for each pixel using a distance transform with indices.
-    - Assign FG/BG pixels to the nearest label id, then you can aggregate per label.
     """
     labels = nuclei_labels.astype(np.int32, copy=False)
     nuclei_bin = labels > 0
 
-    # Distance transform returns nearest nucleus pixel indices for every background pixel
-    # We use those indices to map each pixel to a nucleus label.
+    # nearest nucleus assignment via distance transform
     _, (iy, ix) = ndi.distance_transform_edt(~nuclei_bin, return_indices=True)
-    nearest_label = labels[iy, ix]  # 0 where no nuclei exist (should be rare)
+    nearest_label = labels[iy, ix]
 
     fg_label_map = np.where(fg_union, nearest_label, 0).astype(np.int32, copy=False)
     bg_label_map = np.where(bg_union, nearest_label, 0).astype(np.int32, copy=False)
