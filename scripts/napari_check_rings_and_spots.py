@@ -65,13 +65,29 @@ fov_index = build_fov_anchor_index(fls_, xs, ys)
 fov_id = fov_id_from_zarr_path(ZARR)
 anchor_xy = fov_index[fov_id]
 
+# --- DEBUG: print coordinate chain ---
+print("=" * 60)
+print(f"[DEBUG] tissue mask shape  : {global_valid.shape}")
+print(f"[DEBUG] FOV labels shape   : {labels.shape}")
+print(f"[DEBUG] FOV id             : {fov_id}")
+print(f"[DEBUG] anchor (dim0,dim1) : {anchor_xy}")
+print(f"[DEBUG] mosaic_cfg.resc    : {mosaic_cfg.resc}")
+tile_h = labels.shape[0] // mosaic_cfg.resc
+tile_w = labels.shape[1] // mosaic_cfg.resc
+print(f"[DEBUG] expected tile size : ({tile_h}, {tile_w})")
+print(f"[DEBUG] crop r0,c0        : ({round(anchor_xy[0] - tile_h/2)}, {round(anchor_xy[1] - tile_w/2)})")
+print(f"[DEBUG] crop r1,c1        : ({round(anchor_xy[0] + tile_h/2)}, {round(anchor_xy[1] + tile_w/2)})")
+print(f"[DEBUG] tissue mask True%  : {global_valid.mean():.4f}")
+print("=" * 60)
+
 valid_mask = crop_valid_mask_for_fov(
     global_valid_mask=global_valid,
     fov_anchor_xy=anchor_xy,
     fov_shape_hw=labels.shape,
-    mosaic_resc=mosaic_cfg.resc, # mask lives at mosaic resolution
+    mosaic_resc=mosaic_cfg.resc,
     anchor_is_upper_left=False,
 )
+print(f"[DEBUG] cropped mask True% : {valid_mask.mean():.4f}")
 
 
 cp_cfg = CellProximalConfig(cell_proximal_px=24)
