@@ -69,7 +69,7 @@ valid_mask = crop_valid_mask_for_fov(
     global_valid_mask=global_valid,
     fov_anchor_xy=anchor_xy,
     fov_shape_hw=labels.shape,
-    mosaic_resc=1,              # IMPORTANT: mask is already full-res
+    mosaic_resc=mosaic_cfg.resc, # mask lives at mosaic resolution
     anchor_is_upper_left=False,
 )
 

@@ -1,166 +1,14 @@
+# sqi/qc/valid_mask_mosaic.py
+#
+# FOV-level cropping of a pre-computed mosaic tissue mask.
+# Mask generation lives in scripts/build_tissue_mask_qupath_style.py.
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Tuple
-import os
-import hashlib
-import json
 
 import numpy as np
 from scipy import ndimage as ndi
-from skimage.morphology import disk, remove_small_objects
 
-try:
-    from skimage.morphology import closing
-except ImportError:
-    from skimage.morphology import binary_closing as closing
-
-try:
-    import tifffile
-except Exception:  # pragma: no cover
-    tifffile = None
-
-
-# ============================================================
-# Config
-# ============================================================
-
-@dataclass
-class MosaicValidMaskConfig:
-    """
-    Support-only tissue mask.
-
-    This mask answers ONLY:
-    'Is there tissue here at all?'
-
-    It must NOT:
-    - judge signal quality
-    - exclude dim tissue
-    - react to illumination variation
-    """
-    downsample: int = 4
-    closing_radius: int = 20          # full-res pixels
-    min_object_size: int = 20_000     # full-res pixels
-    fill_holes: bool = True
-
-
-# ============================================================
-# Core logic
-# ============================================================
-def compute_global_valid_mask_from_mosaic(
-    mosaic_img: np.ndarray,
-    cfg: MosaicValidMaskConfig,
-) -> np.ndarray:
-    """
-    Compute a tissue-support mask that captures the true tissue footprint
-    (borders + holes) without judging signal quality.
-    """
-
-    if mosaic_img.ndim != 2:
-        raise ValueError("mosaic_img must be 2D")
-
-    m = mosaic_img.astype(np.float32, copy=False)
-    full_shape = m.shape
-
-    # -------------------------------------------------
-    # 1. Downsample (for speed only)
-    # -------------------------------------------------
-    ds = max(1, int(cfg.downsample))
-    if ds > 1:
-        m_small = m[::ds, ::ds]
-    else:
-        m_small = m
-
-    # -------------------------------------------------
-    # 2. Remove nuclei-scale structure
-    #    (estimate tissue envelope)
-    # -------------------------------------------------
-    # This blur radius should be MUCH larger than nuclei
-    blur_radius = max(10, cfg.closing_radius // ds)
-    m_blur = ndi.gaussian_filter(m_small, sigma=blur_radius)
-
-    # -------------------------------------------------
-    # 3. Very permissive threshold on envelope
-    # -------------------------------------------------
-    nz = m_blur[m_blur > 0]
-    if nz.size == 0:
-        return np.zeros(full_shape, dtype=bool)
-
-    t = np.percentile(nz, 5)   # tissue-support threshold
-    valid = m_blur > t
-
-    # -------------------------------------------------
-    # 4. Morphology (still in downsampled space)
-    # -------------------------------------------------
-    closing_r = max(1, cfg.closing_radius // ds)
-    min_obj = max(1, cfg.min_object_size // (ds * ds))
-
-    valid = closing(valid, footprint=disk(closing_r))
-
-    if cfg.fill_holes:
-        valid = ndi.binary_fill_holes(valid)
-
-    if min_obj > 0:
-        valid = remove_small_objects(valid, min_size=min_obj)
-
-    # -------------------------------------------------
-    # 5. Upsample back to full resolution
-    # -------------------------------------------------
-    if ds > 1:
-        valid = ndi.zoom(valid.astype(np.uint8), ds, order=0).astype(bool)
-        valid = valid[: full_shape[0], : full_shape[1]]
-
-    return valid
-
-
-# ============================================================
-# Cache helpers
-# ============================================================
-
-def _cfg_hash(cfg: MosaicValidMaskConfig) -> str:
-    d = {
-        "downsample": cfg.downsample,
-        "closing_radius": cfg.closing_radius,
-        "min_object_size": cfg.min_object_size,
-        "fill_holes": cfg.fill_holes,
-    }
-    return hashlib.md5(json.dumps(d, sort_keys=True).encode()).hexdigest()[:8]
-
-
-def _mask_cache_path(cache_root: str, mosaic_tif_path: str, cfg: MosaicValidMaskConfig) -> str:
-    os.makedirs(cache_root, exist_ok=True)
-    base = os.path.basename(mosaic_tif_path).replace(".tif", "").replace(".tiff", "")
-    return os.path.join(cache_root, f"{base}_tissue_mask_{_cfg_hash(cfg)}.tiff")
-
-
-def load_or_compute_global_valid_mask(
-    mosaic_tif_path: str,
-    cache_root: str,
-    cfg: MosaicValidMaskConfig,
-    *,
-    force: bool = False,
-) -> np.ndarray:
-    """
-    Load cached tissue mask or compute it from mosaic TIFF.
-    """
-    if tifffile is None:
-        raise ImportError("tifffile is required (pip install tifffile).")
-
-    cache_path = _mask_cache_path(cache_root, mosaic_tif_path, cfg)
-
-    if (not force) and os.path.exists(cache_path):
-        return tifffile.imread(cache_path).astype(bool)
-
-    mosaic = tifffile.imread(mosaic_tif_path).astype(np.float32, copy=False)
-    valid = compute_global_valid_mask_from_mosaic(mosaic, cfg)
-
-    tifffile.imwrite(cache_path, valid.astype(np.uint8))
-    return valid
-
-
-# ============================================================
-# FOV cropping
-# ============================================================
 
 def crop_valid_mask_for_fov(
     global_valid_mask: np.ndarray,
@@ -172,9 +20,28 @@ def crop_valid_mask_for_fov(
     round_anchor: bool = True,
 ) -> np.ndarray:
     """
-    Crop mosaic-level valid mask to a single FOV.
-    """
+    Crop mosaic-level tissue mask to a single FOV.
 
+    Parameters
+    ----------
+    global_valid_mask:
+        (H_mosaic, W_mosaic) boolean mask at mosaic resolution.
+    fov_anchor_xy:
+        (dim0, dim1) anchor in mosaic pixel coordinates from compose_mosaic.
+    fov_shape_hw:
+        (H_fov, W_fov) in **full-resolution** pixels.
+    mosaic_resc:
+        The rescale factor used to build the mosaic (MosaicBuildConfig.resc).
+        Anchor and mask live at this downsampled scale; fov_shape_hw is full-res.
+    anchor_is_upper_left:
+        True  -> anchor is upper-left corner of FOV in mosaic.
+        False -> anchor is center of FOV (compose_mosaic default).
+
+    Returns
+    -------
+    valid_mask_fov:
+        (H_fov, W_fov) boolean at full resolution.  Out-of-bounds = False.
+    """
     Hm, Wm = global_valid_mask.shape
     hf_full, wf_full = map(int, fov_shape_hw)
 
@@ -217,10 +84,6 @@ def crop_valid_mask_for_fov(
     return out
 
 
-# ============================================================
-# Debug helper
-# ============================================================
-
 def overlay_bbox_on_mosaic(
     mosaic_img: np.ndarray,
     fov_anchor_xy: Tuple[float, float],
@@ -229,6 +92,7 @@ def overlay_bbox_on_mosaic(
     mosaic_resc: int = 1,
     anchor_is_upper_left: bool = True,
 ):
+    """Debug: show FOV bbox on mosaic. Uses matplotlib (col, row) convention."""
     import matplotlib.pyplot as plt
     from matplotlib.patches import Rectangle
 
