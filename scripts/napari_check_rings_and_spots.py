@@ -6,16 +6,15 @@ from sqi.qc.rings import CellProximalConfig, build_cell_proximal_and_distal_mask
 from sqi.qc.qc_plots import visualize_nuclei_rings_and_spots_napari
 
 from sqi.qc.mosaic_coords import build_mosaic_and_coords, build_fov_anchor_index, fov_id_from_zarr_path, MosaicBuildConfig
-from sqi.qc.valid_mask_mosaic import load_or_compute_global_valid_mask, MosaicValidMaskConfig, crop_valid_mask_for_fov, overlay_bbox_on_mosaic
+from sqi.qc.valid_mask_mosaic import crop_valid_mask_for_fov, overlay_bbox_on_mosaic
 
 # --------------------------------------------------
 # PATHS (your dataset)
 # --------------------------------------------------
 ZARR = r"\\192.168.0.73\Papaya13\Sasha\20251105_6OHDA\H1\H1_PTBP1_TH_GFAP_set1\Conv_zscan1_074.zarr"
 LABELS = r"output\H1_seg\nuclei_labels.tif"
-MOSAIC_TIF = r"M:\Sasha\20251105_6OHDA\H1\H1mosaics\H1_PTBP1_TH_GFAP_set1_middle15_col-1.tiff"
-# If you saved a mask already, point to it; otherwise we compute in-memory from MOSAIC_TIF.
-MOSAIC_VALID_MASK_TIF = None  # or r"..._valid_mask.tiff"
+MOSAIC_TIF = r"\\192.168.0.73\Papaya13\Sasha\20251105_6OHDA\H1\H1mosaics\H1_PTBP1_TH_GFAP_set1_middle15_col-1.tiff"
+MOSAIC_VALID_MASK_TIF = r"\\192.168.0.73\Papaya13\Lilian\merfish_sqi_cache\H1_PTBP1_TH_GFAP_set1_middle15_col-1_tissue_mask.tiff"
 
 # TODO: update this to your actual spot file
 SPOTS_NPY = r"output\H1_spots\spots_rc.npy"   # shape (N,2), row/col
@@ -44,11 +43,10 @@ else:
 # --------------------------------------------------
 # BUILD RINGS
 # --------------------------------------------------
-MOSAIC_TIF = r"M:\Sasha\20251105_6OHDA\H1\H1mosaics\H1_PTBP1_TH_GFAP_set1_middle15_col-1.tiff"
 CACHE_ROOT = r"\\192.168.0.73\Papaya13\Lilian\merfish_sqi_cache"
 
-vm_cfg = MosaicValidMaskConfig(closing_radius=30, min_object_size=50_000, downsample=4)
-global_valid = load_or_compute_global_valid_mask(MOSAIC_TIF, CACHE_ROOT, vm_cfg, force=False)
+print("Loading tissue mask from:", MOSAIC_VALID_MASK_TIF)
+global_valid = tiff.imread(MOSAIC_VALID_MASK_TIF).astype(bool)
 
 # TODO: crop global_valid to this FOV using anchor coords (next step)
 
@@ -71,9 +69,10 @@ valid_mask = crop_valid_mask_for_fov(
     global_valid_mask=global_valid,
     fov_anchor_xy=anchor_xy,
     fov_shape_hw=labels.shape,
-    mosaic_resc=mosaic_cfg.resc,
+    mosaic_resc=1,              # IMPORTANT: mask is already full-res
     anchor_is_upper_left=False,
 )
+
 
 cp_cfg = CellProximalConfig(cell_proximal_px=24)
 
