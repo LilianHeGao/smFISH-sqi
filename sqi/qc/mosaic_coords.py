@@ -70,7 +70,7 @@ def compose_mosaic(ims,xs_um,ys_um,ims_c=None,um_per_pix=0.108333,rot = 0,return
         return im_big,xs_pix+sh_[-2]/2,ys_pix+sh_[-1]/2
     return im_big
 
-def _mosaic_cache_paths(
+def mosaic_cache_paths(
     data_fld: str,
     cfg: MosaicBuildConfig,
     cache_root: str,
@@ -104,7 +104,7 @@ def build_mosaic_and_coords(
       fls_: list of .zarr paths (aligned with xs, ys)
       xs, ys: arrays of placement coordinates returned by compose_mosaic(return_coords=True)
     """
-    mosaic_tif, coords_npz = _mosaic_cache_paths(data_fld, cfg, cache_root)
+    mosaic_tif, coords_npz = mosaic_cache_paths(data_fld, cfg, cache_root)
 
     # If cached and not forcing rebuild, load coords + mosaic
     if cache and (not cfg.force) and os.path.exists(mosaic_tif) and os.path.exists(coords_npz):
