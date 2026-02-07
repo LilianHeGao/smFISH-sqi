@@ -10,7 +10,11 @@ import json
 import numpy as np
 from scipy import ndimage as ndi
 from skimage.filters import threshold_otsu
-from skimage.morphology import closing, disk, remove_small_objects
+from skimage.morphology import disk, remove_small_objects
+try:
+    from skimage.morphology import closing
+except ImportError:
+    from skimage.morphology import binary_closing as closing
 
 
 try:
@@ -78,7 +82,7 @@ def compute_global_valid_mask_from_mosaic(
         valid = closing(valid, footprint=disk(closing_r))
 
     if min_obj > 0:
-        valid = remove_small_objects(valid, max_size=min_obj)
+        valid = remove_small_objects(valid, min_size=min_obj)
 
     if cfg.fill_holes:
         valid = ndi.binary_fill_holes(valid)
