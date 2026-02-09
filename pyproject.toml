@@ -15,6 +15,11 @@ dependencies = [
   "pyarrow",
 ]
 
+# NOTE: torch/torchvision/torchaudio are NOT listed above to avoid
+# pip pulling CPU-only versions that conflict with CUDA conda packages.
+# After `pip install -e .`, install GPU PyTorch with:
+#   conda install pytorch torchvision torchaudio pytorch-cuda=12.1 -c pytorch -c nvidia --solver=libmamba
+
 [tool.setuptools]
 packages = [
   "sqi",
