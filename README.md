@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/logo/sqi_logo.png" width="220"/>
+  <img src="assets/sqi_logo.png" width="220"/>
 </p>
 
 <h1 align="center">SQI</h1>
