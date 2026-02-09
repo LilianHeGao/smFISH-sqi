@@ -4,7 +4,7 @@
 
 ---
 
-# SQI – imaging-based sample quality control for smFISH / MERFISH
+# SQI – imaging-based sample quality control for smFISH
 
 **SQI (Sample Quality Index)** is a modular, image-derived quality control (QC) framework for
 **smFISH and MERFISH spatial transcriptomics data**.
