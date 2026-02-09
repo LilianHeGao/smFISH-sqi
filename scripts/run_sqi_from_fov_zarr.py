@@ -10,11 +10,13 @@ python scripts/run_sqi_from_fov_zarr.py \
   --out_root   /output
 """
 import argparse
+import csv
 import json
 import os
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 import tifffile as tiff
 
 from sqi.io.image_io import (
@@ -36,12 +38,19 @@ from sqi.qc.metrics import compute_sqi_from_label_maps
 from sqi.qc.qc_plots import plot_sqi_distribution
 from sqi.spot_calling.spotiflow_backend import SpotiflowBackend, SpotiflowConfig
 from sqi.spot_features.features import compute_spot_features, SpotFeatureConfig
-from sqi.spot_features.quality import compute_quality_scores, QualityGateConfig
+from sqi.spot_features.quality import compute_quality_scores
 
 
 # ----------------------------------------------------------------
 # Helpers
 # ----------------------------------------------------------------
+
+def _zproject(ch_img):
+    """Max z-project a (Z,Y,X) or (Y,X) dask/numpy array to 2D float32."""
+    if ch_img.ndim == 3:
+        return np.array(ch_img.max(axis=0), dtype=np.float32)
+    return np.array(ch_img, dtype=np.float32)
+
 
 def detect_spots_spotiflow(
     fov_zarr: str,
@@ -54,7 +63,7 @@ def detect_spots_spotiflow(
     prob_thresh: float = 0.5,
     force: bool = False,
 ):
-    """Detect spots via Spotiflow, compute features + quality, cache as parquet."""
+    """Detect spots per channel, compute per-channel features + quality, cache as parquet."""
     parquet_path = cache_dir / "spots.parquet"
     meta_path = cache_dir / "spots_meta.json"
 
@@ -66,56 +75,47 @@ def detect_spots_spotiflow(
     n_channels = im.shape[0]
     spot_channel_indices = list(range(n_channels - 1))
 
+    # Pre-compute z-projected images per channel
+    ch_images = {ch: _zproject(im[ch]) for ch in spot_channel_indices}
+
+    # Detect per channel
     sf_cfg = SpotiflowConfig(pretrained_model=model, prob_thresh=prob_thresh)
     backend = SpotiflowBackend(sf_cfg)
 
-    all_spots, all_scores, all_channels, all_metas = [], [], [], []
-
+    all_spots, all_scores, all_metas = {}, {}, {}
     for ch_idx in spot_channel_indices:
-        ch_img = im[ch_idx]
-        if ch_img.ndim == 3:
-            ch_2d = np.array(ch_img.max(axis=0), dtype=np.float32)
-        else:
-            ch_2d = np.array(ch_img, dtype=np.float32)
-
-        spots_rc, scores, meta = backend.detect(ch_2d)
+        spots_rc, scores, meta = backend.detect(ch_images[ch_idx])
         print(f"       channel {ch_idx}: {len(spots_rc)} spots")
-        all_spots.append(spots_rc)
-        all_scores.append(scores)
-        all_channels.append(np.full(len(spots_rc), ch_idx, dtype=np.int32))
-        all_metas.append(meta)
+        all_spots[ch_idx] = spots_rc
+        all_scores[ch_idx] = scores
+        all_metas[ch_idx] = meta
 
-    if all_spots:
-        spots_rc = np.vstack(all_spots).astype(np.float32)
-        scores = np.concatenate(all_scores).astype(np.float32)
-        channels = np.concatenate(all_channels)
-    else:
-        spots_rc = np.zeros((0, 2), dtype=np.float32)
-        scores = np.zeros(0, dtype=np.float32)
-        channels = np.zeros(0, dtype=np.int32)
-
-    # Composite image for intensity features
-    composite = np.zeros(labels.shape, dtype=np.float32)
+    # Per-channel features
+    feat_cfg = SpotFeatureConfig()
+    dfs = []
     for ch_idx in spot_channel_indices:
-        ch_img = im[ch_idx]
-        if ch_img.ndim == 3:
-            ch_2d = np.array(ch_img.max(axis=0), dtype=np.float32)
-        else:
-            ch_2d = np.array(ch_img, dtype=np.float32)
-        composite = np.maximum(composite, ch_2d)
+        if len(all_spots[ch_idx]) == 0:
+            continue
+        ch_df = compute_spot_features(
+            ch_images[ch_idx],
+            all_spots[ch_idx],
+            all_scores[ch_idx],
+            labels, fg_mask, bg_mask, feat_cfg,
+        )
+        ch_df.insert(2, "channel", ch_idx)
+        dfs.append(ch_df)
 
-    df = compute_spot_features(
-        composite, spots_rc, scores, labels, fg_mask, bg_mask,
-    )
-    df.insert(2, "channel", channels)
-    df = compute_quality_scores(df)
+    df = pd.concat(dfs, ignore_index=True) if dfs else pd.DataFrame()
+
+    # Per-channel quality scoring
+    if len(df) > 0:
+        df = compute_quality_scores(df)
 
     write_spots_parquet(df, str(parquet_path))
     write_spots_meta({
         "n_spots_total": len(df),
-        "n_pass_permissive": int(df["pass_permissive"].sum()),
-        "n_pass_conservative": int(df["pass_conservative"].sum()),
-        "per_channel": all_metas,
+        "n_pass_conservative": int(df["pass_conservative"].sum()) if len(df) > 0 else 0,
+        "per_channel": {str(k): v for k, v in all_metas.items()},
     }, str(meta_path))
 
     return df
@@ -134,6 +134,25 @@ def get_or_build_tissue_mask(mosaic_tif: str, cache_root: str) -> np.ndarray:
     tiff.imwrite(mask_tif, mask.astype(np.uint8))
     print("[INFO] Saved tissue mask:", mask_tif)
     return mask
+
+
+def _compute_sqi_for_spots(fg_label_map, bg_label_map, spots_df):
+    """Filter to pass_conservative, compute quality-weighted SQI."""
+    spots_pass = spots_df[spots_df["pass_conservative"]].copy()
+    if len(spots_pass) == 0:
+        return {}, {}, {}, 0
+
+    spots_int = np.column_stack([
+        np.clip(spots_pass["row"].values.astype(np.int32), 0, fg_label_map.shape[0] - 1),
+        np.clip(spots_pass["col"].values.astype(np.int32), 0, fg_label_map.shape[1] - 1),
+    ])
+    weights = spots_pass["q_score"].values.astype(np.float32)
+
+    sqi, fg_counts, bg_counts = compute_sqi_from_label_maps(
+        fg_label_map, bg_label_map, spots_int,
+        spot_weights=weights,
+    )
+    return sqi, fg_counts, bg_counts, len(spots_int)
 
 
 # ----------------------------------------------------------------
@@ -212,12 +231,11 @@ def main(args):
     fg_label_map, bg_label_map = per_cell_fg_bg(labels, fg_mask, bg_mask)
     print(f"       {region_stats}")
 
-    # Save masks for standalone run_spots.py usage
     tiff.imwrite(str(cache_dir / "fg_mask.tif"), fg_mask.astype(np.uint8))
     tiff.imwrite(str(cache_dir / "bg_mask.tif"), bg_mask.astype(np.uint8))
 
     # =====================================================
-    # 6. Spot detection (Spotiflow + features + quality)
+    # 6. Spot detection (Spotiflow, per-channel features + quality)
     # =====================================================
     print("[6/7] Detecting spots (Spotiflow) ...")
     spots_df = detect_spots_spotiflow(
@@ -227,62 +245,114 @@ def main(args):
         force=args.force,
     )
 
-    # Filter to conservative-pass spots, use q_score as weight
-    spots_pass = spots_df[spots_df["pass_conservative"]].copy()
-    spots_int = np.column_stack([
-        np.clip(spots_pass["row"].values.astype(np.int32), 0, labels.shape[0] - 1),
-        np.clip(spots_pass["col"].values.astype(np.int32), 0, labels.shape[1] - 1),
-    ])
-    weights = spots_pass["q_score"].values.astype(np.float32)
-    print(f"       n_spots_total = {len(spots_df)}, n_pass = {len(spots_int)}")
+    if len(spots_df) == 0:
+        print("[WARN] No spots detected. Skipping SQI.")
+        return
+
+    channels = sorted(spots_df["channel"].unique())
+    print(f"       n_spots_total = {len(spots_df)}, "
+          f"n_pass = {spots_df['pass_conservative'].sum()}")
 
     # =====================================================
-    # 7. Compute SQI (quality-weighted)
+    # 7. Compute SQI (per-channel + total, quality-weighted)
     # =====================================================
     print("[7/7] Computing SQI ...")
-    sqi, fg_counts, bg_counts = compute_sqi_from_label_maps(
-        fg_label_map, bg_label_map, spots_int,
-        spot_weights=weights,
+
+    # --- Per-channel SQI ---
+    per_ch_sqi = {}
+    for ch in channels:
+        ch_df = spots_df[spots_df["channel"] == ch]
+        sqi_ch, fg_ch, bg_ch, n_pass_ch = _compute_sqi_for_spots(
+            fg_label_map, bg_label_map, ch_df,
+        )
+        vals_ch = np.array([v for v in sqi_ch.values() if np.isfinite(v) and v > 0])
+        per_ch_sqi[int(ch)] = {
+            "n_spots": len(ch_df),
+            "n_pass": n_pass_ch,
+            "n_cells_with_sqi": len(vals_ch),
+            "median_sqi": float(np.median(vals_ch)) if len(vals_ch) else None,
+            "mean_log10_sqi": float(np.mean(np.log10(vals_ch))) if len(vals_ch) else None,
+        }
+        print(f"       ch{ch}: {n_pass_ch} pass, "
+              f"median_sqi={per_ch_sqi[int(ch)]['median_sqi']}")
+
+    # --- Total SQI (all channels combined) ---
+    sqi_total, fg_total, bg_total, n_pass_total = _compute_sqi_for_spots(
+        fg_label_map, bg_label_map, spots_df,
     )
 
     # --- Save results ---
-    vals = np.array([v for v in sqi.values() if np.isfinite(v)])
+    vals = np.array([v for v in sqi_total.values() if np.isfinite(v) and v > 0])
     summary = {
         "fov_id": fov_id,
         **region_stats,
         "n_spots_total": len(spots_df),
-        "n_spots_pass": len(spots_int),
+        "n_spots_pass": n_pass_total,
         "n_cells_with_sqi": len(vals),
         "median_sqi": float(np.median(vals)) if len(vals) else None,
-        "mean_log10_sqi": float(np.mean(np.log10(vals[vals > 0]))) if np.any(vals > 0) else None,
+        "mean_log10_sqi": float(np.mean(np.log10(vals))) if len(vals) else None,
+        "per_channel": per_ch_sqi,
     }
 
     (out_dir / "sqi_summary.json").write_text(json.dumps(summary, indent=2))
 
-    # Per-cell CSV
-    import csv
+    # Per-cell CSV (total SQI)
     with open(out_dir / "sqi_per_cell.csv", "w", newline="") as f:
         w = csv.writer(f)
         w.writerow(["cell_id", "sqi", "fg_spots", "bg_spots"])
-        for cid in sorted(sqi.keys()):
+        for cid in sorted(sqi_total.keys()):
             w.writerow([cid,
-                        f"{sqi[cid]:.4f}" if np.isfinite(sqi[cid]) else "nan",
-                        f"{fg_counts.get(cid, 0):.4f}",
-                        f"{bg_counts.get(cid, 0):.4f}"])
+                        f"{sqi_total[cid]:.4f}" if np.isfinite(sqi_total[cid]) else "nan",
+                        f"{fg_total.get(cid, 0):.4f}",
+                        f"{bg_total.get(cid, 0):.4f}"])
+
+    # Per-cell per-channel CSV
+    with open(out_dir / "sqi_per_cell_per_channel.csv", "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["cell_id", "channel", "sqi", "fg_spots", "bg_spots"])
+        for ch in channels:
+            ch_df = spots_df[spots_df["channel"] == ch]
+            sqi_ch, fg_ch, bg_ch, _ = _compute_sqi_for_spots(
+                fg_label_map, bg_label_map, ch_df,
+            )
+            for cid in sorted(sqi_ch.keys()):
+                w.writerow([cid, int(ch),
+                            f"{sqi_ch[cid]:.4f}" if np.isfinite(sqi_ch[cid]) else "nan",
+                            f"{fg_ch.get(cid, 0):.4f}",
+                            f"{bg_ch.get(cid, 0):.4f}"])
 
     # Plot
     import matplotlib
     matplotlib.use("Agg")
-    ax = plot_sqi_distribution(sqi, title=f"SQI — FOV {fov_id}")
-    fig = ax.get_figure()
+    import matplotlib.pyplot as plt
+
+    fig, axes = plt.subplots(1, len(channels) + 1,
+                             figsize=(4 * (len(channels) + 1), 3))
+    if len(channels) + 1 == 1:
+        axes = [axes]
+
+    # Per-channel histograms
+    colors = ["tab:blue", "tab:orange", "tab:green", "tab:red", "tab:purple"]
+    for i, ch in enumerate(channels):
+        ch_df = spots_df[spots_df["channel"] == ch]
+        sqi_ch, _, _, _ = _compute_sqi_for_spots(fg_label_map, bg_label_map, ch_df)
+        plot_sqi_distribution(sqi_ch, ax=axes[i],
+                              color=colors[i % len(colors)],
+                              title=f"ch{ch}")
+
+    # Total histogram
+    plot_sqi_distribution(sqi_total, ax=axes[-1], title="Total")
+
+    fig.suptitle(f"SQI — FOV {fov_id}", fontsize=12)
     fig.tight_layout()
     fig.savefig(str(out_dir / "sqi_distribution.png"), dpi=200)
+    plt.close(fig)
 
     print("=" * 50)
     print(f"[DONE] FOV {fov_id}")
-    print(f"  median SQI     = {summary['median_sqi']}")
-    print(f"  mean log10 SQI = {summary['mean_log10_sqi']}")
-    print(f"  output dir     = {out_dir}")
+    print(f"  median SQI (total) = {summary['median_sqi']}")
+    print(f"  mean log10 SQI     = {summary['mean_log10_sqi']}")
+    print(f"  output dir         = {out_dir}")
     print("=" * 50)
 
 
