@@ -35,8 +35,18 @@ def compute_quality_scores(
     """
     out = df.copy()
 
-    snr_norm = np.log1p(df["snr"].values) / np.log1p(cfg.snr_cap)
-    snr_norm = np.clip(snr_norm, 0, 1).astype(np.float32)
+    snr = df["snr"].values.astype(np.float32)
+
+    # 1. 先处理非有限值
+    snr = np.nan_to_num(snr, nan=0.0, neginf=0.0, posinf=cfg.snr_cap)
+
+    # 2. 负 SNR 没有信息量，直接截断
+    snr = np.clip(snr, 0.0, None)
+
+    # 3. 再做 log normalization
+    snr_norm = np.log1p(snr) / np.log1p(cfg.snr_cap)
+    snr_norm = np.clip(snr_norm, 0.0, 1.0).astype(np.float32)
+
 
     score_raw = df["score"].values.astype(np.float32)
     score_norm = np.tanh(score_raw / 10.0).astype(np.float32)
@@ -58,6 +68,22 @@ def compute_quality_scores(
     out["pass_conservative"] = (
         (df["snr"] >= cfg.conservative_snr_min)
         & (df["ellipticity"] <= cfg.conservative_ellip_max)
+    )
+    print(
+    "[DEBUG] q_score:",
+    np.percentile(q, [0, 5, 25, 50, 75, 95, 100])
+)
+    print(
+        "[DEBUG] snr_norm:",
+        np.percentile(snr_norm, [5, 50, 95])
+    )
+    print(
+        "[DEBUG] score:",
+        np.percentile(score_vals, [5, 50, 95])
+    )
+    print(
+        "[DEBUG] symmetry:",
+        np.percentile(symmetry, [5, 50, 95])
     )
 
     return out
