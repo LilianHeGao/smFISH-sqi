@@ -79,7 +79,7 @@ def compute_quality_scores(
     )
     print(
         "[DEBUG] score:",
-        np.percentile(score_vals, [5, 50, 95])
+        np.percentile(score_norm, [5, 50, 95])
     )
     print(
         "[DEBUG] symmetry:",
