@@ -43,104 +43,6 @@ def plot_sqi_distribution(
     return ax
 
 
-def plot_real_vs_null_sqi(
-    sqi_real: Dict[int, float],
-    sqi_null: Dict[int, float],
-    *,
-    title: Optional[str] = None,
-):
-    """
-    Overlay real vs null SQI distributions.
-    """
-    fig, ax = plt.subplots(figsize=(4.5, 3.2))
-
-    plot_sqi_distribution(
-        sqi_real, ax=ax, color="tab:blue", label="Real"
-    )
-    plot_sqi_distribution(
-        sqi_null, ax=ax, color="tab:orange", label="Null"
-    )
-
-    if title is not None:
-        ax.set_title(title)
-
-    plt.tight_layout()
-    return fig, ax
-
-
-# ---------------------------
-# SENSITIVITY PLOTS
-# ---------------------------
-
-def plot_sqi_sensitivity(
-    sqi_by_scale: Dict[float, Dict[int, float]],
-    *,
-    stat: str = "median",
-):
-    """
-    Plot SQI summary statistic vs ring scale.
-
-    sqi_by_scale: {scale: {cell_id: sqi}}
-    """
-    scales = sorted(sqi_by_scale.keys())
-    stats = []
-
-    for s in scales:
-        vals = np.array(list(sqi_by_scale[s].values()), dtype=float)
-        vals = vals[np.isfinite(vals)]
-        if stat == "median":
-            stats.append(np.median(vals))
-        elif stat == "mean":
-            stats.append(np.mean(vals))
-        else:
-            raise ValueError(f"Unknown stat: {stat}")
-
-    fig, ax = plt.subplots(figsize=(4, 3))
-    ax.plot(scales, np.log10(stats), marker="o")
-
-    ax.set_xlabel("Ring scale factor")
-    ax.set_ylabel(f"log10({stat} SQI)")
-    ax.set_title("SQI sensitivity to ring size")
-
-    plt.tight_layout()
-    return fig, ax
-
-def visualize_rings_matplotlib(
-    nuclei_labels,
-    fg_union,
-    bg_union,
-    *,
-    cell_id: Optional[int] = None,
-    ax: Optional[plt.Axes] = None,
-):
-    """
-    Visualize nuclei + FG/BG rings.
-    If cell_id is provided, highlight only that cell.
-    """
-    if ax is None:
-        fig, ax = plt.subplots(figsize=(5, 5))
-
-    img = np.zeros((*nuclei_labels.shape, 3), dtype=float)
-
-    # nuclei in gray
-    img[..., :] = (nuclei_labels > 0)[..., None] * 0.3
-
-    # FG in green
-    img[fg_union] = [0.1, 0.8, 0.1]
-
-    # BG in red
-    img[bg_union] = [0.9, 0.2, 0.2]
-
-    if cell_id is not None:
-        mask = nuclei_labels == cell_id
-        img[mask] = [0.2, 0.2, 1.0]  # highlight nucleus
-
-    ax.imshow(img)
-    ax.set_axis_off()
-    ax.set_title("FG (green) / BG (red)")
-
-    return ax
-
 def visualize_nuclei_rings_and_spots_napari(
     dapi: np.ndarray,
     nuclei_labels: np.ndarray,
@@ -151,8 +53,6 @@ def visualize_nuclei_rings_and_spots_napari(
     valid_mask: np.ndarray | None = None,
     spot_size: float = 4.0,
 ):
-
-
     """
     Visualize DAPI + nuclei + FG/BG rings + RNA spots in Napari.
 
@@ -161,20 +61,17 @@ def visualize_nuclei_rings_and_spots_napari(
     import napari
     viewer = napari.Viewer()
 
-    # --- DAPI ---
     viewer.add_image(
         dapi,
         name="DAPI",
         contrast_limits=[0, np.percentile(dapi, 99.8)],
     )
 
-    # --- nuclei ---
     viewer.add_labels(
         nuclei_labels.astype(np.int32),
         name="nuclei",
     )
 
-    # --- FG / BG ---
     viewer.add_labels(
         cell_proximal.astype(np.int32),
         name="cell_proximal (FG)",
@@ -193,7 +90,6 @@ def visualize_nuclei_rings_and_spots_napari(
             opacity=0.25,
         )
 
-    # --- spots ---
     viewer.add_points(
         spots_rc,
         name="RNA spots",

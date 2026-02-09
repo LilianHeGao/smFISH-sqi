@@ -9,7 +9,7 @@ from sqi.qc.mosaic_coords import (
     build_mosaic_and_coords, build_fov_anchor_index,
     fov_id_from_zarr_path, MosaicBuildConfig, mosaic_cache_paths,
 )
-from sqi.qc.valid_mask_mosaic import crop_valid_mask_for_fov, overlay_bbox_on_mosaic
+from sqi.qc.valid_mask_mosaic import crop_valid_mask_for_fov
 
 # --------------------------------------------------
 # PATHS (your dataset)

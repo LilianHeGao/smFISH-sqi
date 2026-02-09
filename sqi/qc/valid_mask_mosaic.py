@@ -82,33 +82,3 @@ def crop_valid_mask_for_fov(
         out = crop
 
     return out
-
-
-def overlay_bbox_on_mosaic(
-    mosaic_img: np.ndarray,
-    fov_anchor_xy: Tuple[float, float],
-    fov_shape_hw: Tuple[int, int],
-    *,
-    mosaic_resc: int = 1,
-    anchor_is_upper_left: bool = True,
-):
-    """Debug: show FOV bbox on mosaic. Uses matplotlib (col, row) convention."""
-    import matplotlib.pyplot as plt
-    from matplotlib.patches import Rectangle
-
-    hf = int(fov_shape_hw[0]) // mosaic_resc
-    wf = int(fov_shape_hw[1]) // mosaic_resc
-    a0, a1 = fov_anchor_xy
-
-    if anchor_is_upper_left:
-        r0, c0 = a0, a1
-    else:
-        r0 = a0 - hf / 2
-        c0 = a1 - wf / 2
-
-    fig, ax = plt.subplots(figsize=(8, 8))
-    ax.imshow(mosaic_img, cmap="gray")
-    ax.add_patch(Rectangle((c0, r0), wf, hf, fill=False, linewidth=2, edgecolor="red"))
-    ax.set_title("FOV bbox on mosaic")
-    ax.set_axis_off()
-    return fig, ax
