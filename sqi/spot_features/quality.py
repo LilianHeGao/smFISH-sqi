@@ -12,8 +12,8 @@ class QualityGateConfig:
     score_weight: float = 0.3
     symmetry_weight: float = 0.3
     snr_cap: float = 20.0
-    permissive_thresh: float = 0.2
-    conservative_thresh: float = 0.5
+    permissive_thresh: float = 0.6
+    conservative_thresh: float = 0.8
 
 
 def compute_quality_scores(
@@ -37,7 +37,7 @@ def compute_quality_scores(
 
     ellip = df["ellipticity"].values.astype(np.float32)
     ellip = np.where(np.isfinite(ellip), ellip, 0.5)
-    symmetry = (1.0 - ellip).astype(np.float32)
+    symmetry = np.exp(-np.abs(np.log(ellip))).astype(np.float32)
 
     q = (cfg.snr_weight * snr_norm
          + cfg.score_weight * score_vals
@@ -46,5 +46,20 @@ def compute_quality_scores(
     out["q_score"] = q
     out["pass_permissive"] = q >= cfg.permissive_thresh
     out["pass_conservative"] = q >= cfg.conservative_thresh
-
+    print(
+    "[DEBUG] q_score:",
+    np.percentile(q, [0, 5, 25, 50, 75, 95, 100])
+)
+    print(
+    "[DEBUG] snr_norm:",
+    np.percentile(snr_norm, [5, 50, 95])
+)
+    print(
+        "[DEBUG] score:",
+        np.percentile(score_vals, [5, 50, 95])
+    )
+    print(
+        "[DEBUG] symmetry:",
+        np.percentile(symmetry, [5, 50, 95])
+    )
     return out
