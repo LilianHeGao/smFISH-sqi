@@ -78,13 +78,14 @@ def mosaic_cache_paths(
     """
     Returns:
       mosaic_tif_path, coords_npz_path
-    Saved under cache_root, NOT alongside data.
+    Saved under cache_root/_mosaic/, NOT alongside data.
     """
-    os.makedirs(cache_root, exist_ok=True)
+    mosaic_dir = os.path.join(cache_root, "_mosaic")
+    os.makedirs(mosaic_dir, exist_ok=True)
 
     base = f"{os.path.basename(data_fld)}_frame{cfg.frame}_col{cfg.icol}_resc{cfg.resc}_rescz{cfg.rescz}"
-    mosaic_tif = os.path.join(cache_root, base + ".tiff")
-    coords_npz = os.path.join(cache_root, base + "_coords.npz")
+    mosaic_tif = os.path.join(mosaic_dir, base + ".tiff")
+    coords_npz = os.path.join(mosaic_dir, base + "_coords.npz")
     return mosaic_tif, coords_npz
 
 
