@@ -288,14 +288,21 @@ def main(args):
         np.clip(spots_pass["col"].values.astype(np.int32), 0, fg_label_map.shape[1] - 1),
     ])
     weights = spots_pass["q_score"].values.astype(np.float32)
-    real_sqi_sc, null_sqi_sc = sqi_sanity_check(
+    real_sqi_sc, null_sqi_sc, sanity_auc = sqi_sanity_check(
         fg_label_map, bg_label_map, spots_int, weights,
     )
     real_vals_sc = np.array([v for v in real_sqi_sc.values() if np.isfinite(v) and v > 0])
     null_vals_sc = np.array([v for v in null_sqi_sc.values() if np.isfinite(v) and v > 0])
-    print(f"       sanity check: real median={np.median(real_vals_sc):.2f}, "
-          f"null median={np.median(null_vals_sc):.2f}"
-          if len(real_vals_sc) and len(null_vals_sc) else "       sanity check: insufficient data")
+    if len(real_vals_sc) and len(null_vals_sc):
+        print(f"       sanity check: real median={np.median(real_vals_sc):.2f}, "
+              f"null median={np.median(null_vals_sc):.2f}, AUC={sanity_auc:.3f}")
+    else:
+        print("       sanity check: insufficient data")
+
+    sqi_reliable = bool(np.isfinite(sanity_auc) and sanity_auc >= 0.6)
+    if not sqi_reliable:
+        print(f"WARNING: FG/BG separation insufficient for this FOV "
+              f"(AUC={sanity_auc:.2f}), SQI may not be informative.")
 
     # --- Save results ---
     vals = np.array([v for v in sqi_total.values() if np.isfinite(v) and v > 0])
@@ -307,6 +314,8 @@ def main(args):
         "n_cells_with_sqi": len(vals),
         "median_sqi": float(np.median(vals)) if len(vals) else None,
         "mean_log10_sqi": float(np.mean(np.log10(vals))) if len(vals) else None,
+        "sanity_auc": float(sanity_auc) if np.isfinite(sanity_auc) else None,
+        "sqi_reliable": sqi_reliable,
         "per_channel": per_ch_sqi,
     }
 

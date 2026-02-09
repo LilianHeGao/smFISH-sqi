@@ -76,6 +76,9 @@ def sqi_sanity_check(
     -------
     real_sqi : dict {cell_id: float}
     null_sqi : dict {cell_id: float}
+    auc : float
+        ROC AUC (Mann-Whitney U) of log10(real) vs log10(null).
+        NaN if either group has fewer than 5 finite positive values.
     """
     # --- real SQI ---
     real_sqi, _, _ = compute_sqi_from_label_maps(
@@ -118,7 +121,7 @@ def sqi_sanity_check(
         pseudo_list.append(px[idx])
 
     if not pseudo_list:
-        return real_sqi, {}
+        return real_sqi, {}, np.nan
 
     pseudo_spots = np.concatenate(pseudo_list, axis=0)
 
@@ -127,4 +130,23 @@ def sqi_sanity_check(
         fg_label_map, bg_label_map, pseudo_spots, spot_weights=None,
     )
 
-    return real_sqi, null_sqi
+    # --- AUC: Mann-Whitney U between log10 real vs null ---
+    real_log = np.array([
+        np.log10(v) for v in real_sqi.values()
+        if np.isfinite(v) and v > 0
+    ])
+    null_log = np.array([
+        np.log10(v) for v in null_sqi.values()
+        if np.isfinite(v) and v > 0
+    ])
+
+    if len(real_log) < 5 or len(null_log) < 5:
+        auc = np.nan
+    else:
+        # Mann-Whitney U (no sklearn)
+        u = 0.0
+        for r in real_log:
+            u += np.sum(r > null_log) + 0.5 * np.sum(r == null_log)
+        auc = u / (len(real_log) * len(null_log))
+
+    return real_sqi, null_sqi, auc
