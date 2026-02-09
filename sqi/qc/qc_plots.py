@@ -23,7 +23,7 @@ def plot_sqi_distribution(
     sqi: dict {cell_id: sqi_value}
     """
     values = np.array(list(sqi.values()), dtype=float)
-    values = values[np.isfinite(values)]
+    values = values[np.isfinite(values) & (values > 0)]
 
     if ax is None:
         fig, ax = plt.subplots(figsize=(4, 3))
