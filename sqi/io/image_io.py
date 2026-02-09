@@ -10,9 +10,18 @@ import os
 from dask import array as da
 
 
+def _fov_variants(fov: str) -> list:
+    """Return FOV id variants: original, stripped, zero-padded to 3/4 digits."""
+    seen = []
+    for v in [fov, fov.lstrip("0") or "0", fov.zfill(3), fov.zfill(4)]:
+        if v not in seen:
+            seen.append(v)
+    return seen
+
+
 def _resolve_fov_data_path(dirname: str, fov: str) -> str:
-    """Try both '040/data' and '40/data' (with/without leading zeros)."""
-    candidates = [fov, fov.lstrip("0") or "0"]
+    """Try FOV variants (e.g. '040', '40', '0040') for data directory."""
+    candidates = _fov_variants(fov)
     for f in candidates:
         p = os.path.join(dirname, f, "data")
         if os.path.exists(p):
@@ -20,6 +29,20 @@ def _resolve_fov_data_path(dirname: str, fov: str) -> str:
     raise FileNotFoundError(
         f"Expected data directory not found. Tried: "
         + ", ".join(os.path.join(dirname, f, "data") for f in candidates)
+    )
+
+
+def _resolve_xml_path(dirname: str, zarr_basename: str, fov: str) -> str:
+    """Try FOV variants for the XML metadata file."""
+    prefix = zarr_basename.rsplit("_", 1)[0]  # e.g. 'Conv_zscan11'
+    candidates = _fov_variants(fov)
+    for f in candidates:
+        p = os.path.join(dirname, f"{prefix}_{f}.xml")
+        if os.path.exists(p):
+            return p
+    raise FileNotFoundError(
+        f"XML metadata not found. Tried: "
+        + ", ".join(f"{prefix}_{f}.xml" for f in candidates)
     )
 
 
@@ -57,28 +80,26 @@ def read_dapi_from_conv_zarr(
     image = da.from_zarr(data_path)[1:]
 
     shape = image.shape
-    xml_file = os.path.join(dirname, os.path.basename(zarr_path).split(".")[0] + ".xml")
+    zarr_base = os.path.basename(zarr_path).split(".")[0]
+    xml_file = _resolve_xml_path(dirname, zarr_base, fov)
 
-    if os.path.exists(xml_file):
-        txt = open(xml_file, "r").read()
+    txt = open(xml_file, "r").read()
 
-        tag = "<z_offsets type=\"string\">"
-        zstack = txt.split(tag)[-1].split("</")[0]
+    tag = "<z_offsets type=\"string\">"
+    zstack = txt.split(tag)[-1].split("</")[0]
 
-        nchannels = int(zstack.split(":")[-1])
+    nchannels = int(zstack.split(":")[-1])
 
-        nzs = (shape[0] // nchannels) * nchannels
-        image = image[:nzs]
+    nzs = (shape[0] // nchannels) * nchannels
+    image = image[:nzs]
 
-        # reshape → (Z, C, Y, X) → (C, Z, Y, X)
-        image = image.reshape(
-            shape[0] // nchannels,
-            nchannels,
-            shape[-2],
-            shape[-1],
-        ).swapaxes(0, 1)
-    else:
-        raise RuntimeError("XML metadata not found — cannot infer channel/Z layout")
+    # reshape → (Z, C, Y, X) → (C, Z, Y, X)
+    image = image.reshape(
+        shape[0] // nchannels,
+        nchannels,
+        shape[-2],
+        shape[-1],
+    ).swapaxes(0, 1)
 
     # Select DAPI channel
     dapi = image[channel]
@@ -125,25 +146,22 @@ def read_multichannel_from_conv_zarr(
     image = da.from_zarr(data_path)[1:]
 
     shape = image.shape
-    xml_file = os.path.join(
-        dirname, os.path.basename(zarr_path).split(".")[0] + ".xml"
+    zarr_base = os.path.basename(zarr_path).split(".")[0]
+    xml_file = _resolve_xml_path(dirname, zarr_base, fov)
+
+    txt = open(xml_file, "r").read()
+    tag = '<z_offsets type="string">'
+    zstack = txt.split(tag)[-1].split("</")[0]
+
+    tag = '<stage_position type="custom">'
+    x, y = eval(txt.split(tag)[-1].split("</")[0])
+
+    nchannels = int(zstack.split(":")[-1])
+    nzs = (shape[0] // nchannels) * nchannels
+    image = image[:nzs].reshape(
+        shape[0] // nchannels, nchannels, shape[-2], shape[-1]
     )
-    if os.path.exists(xml_file):
-        txt = open(xml_file, "r").read()
-        tag = '<z_offsets type="string">'
-        zstack = txt.split(tag)[-1].split("</")[0]
-
-        tag = '<stage_position type="custom">'
-        x, y = eval(txt.split(tag)[-1].split("</")[0])
-
-        nchannels = int(zstack.split(":")[-1])
-        nzs = (shape[0] // nchannels) * nchannels
-        image = image[:nzs].reshape(
-            shape[0] // nchannels, nchannels, shape[-2], shape[-1]
-        )
-        image = image.swapaxes(0, 1)
-    else:
-        raise RuntimeError("XML metadata not found")
+    image = image.swapaxes(0, 1)
 
     if return_pos:
         return image, x, y
