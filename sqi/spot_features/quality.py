@@ -12,8 +12,9 @@ class QualityGateConfig:
     score_weight: float = 0.3
     symmetry_weight: float = 0.3
     snr_cap: float = 20.0
-    permissive_thresh: float = 0.6
-    conservative_thresh: float = 0.8
+    permissive_thresh: float = 0.3
+    conservative_snr_min: float = 5.0
+    conservative_ellip_max: float = 1.4
 
 
 def compute_quality_scores(
@@ -23,43 +24,39 @@ def compute_quality_scores(
     """
     Add q_score, pass_permissive, pass_conservative columns.
 
-    q_score = w_snr * clip(snr/snr_cap, 0, 1)
+    q_score is normalized to [0, 1]:
+        raw = w_snr * clip(snr/snr_cap, 0, 1)
             + w_score * score
-            + w_symmetry * (1 - ellipticity)
+            + w_symmetry * symmetry
+        q_score = raw / (w_snr + w_score + w_symmetry)
 
-    NaN ellipticity treated as 0.5 (neutral).
+    pass_permissive: soft gate on q_score >= permissive_thresh.
+    pass_conservative: hard physical gate (snr >= 5 AND ellipticity <= 1.4).
     """
     out = df.copy()
 
     snr_norm = np.clip(df["snr"].values / cfg.snr_cap, 0, 1).astype(np.float32)
 
-    score_vals = df["score"].values.astype(np.float32)
+    score_vals = np.clip(df["score"].values, 0, 1).astype(np.float32)
 
     ellip = df["ellipticity"].values.astype(np.float32)
     ellip = np.where(np.isfinite(ellip), ellip, 0.5)
-    symmetry = np.exp(-np.abs(np.log(ellip))).astype(np.float32)
+    symmetry = np.clip(1.0 - ellip, 0, 1).astype(np.float32)
 
-    q = (cfg.snr_weight * snr_norm
-         + cfg.score_weight * score_vals
-         + cfg.symmetry_weight * symmetry).astype(np.float32)
+    raw = (cfg.snr_weight * snr_norm
+           + cfg.score_weight * score_vals
+           + cfg.symmetry_weight * symmetry)
+
+    w_sum = cfg.snr_weight + cfg.score_weight + cfg.symmetry_weight
+    q = np.clip(raw / w_sum, 0, 1).astype(np.float32)
 
     out["q_score"] = q
     out["pass_permissive"] = q >= cfg.permissive_thresh
-    out["pass_conservative"] = q >= cfg.conservative_thresh
-    print(
-    "[DEBUG] q_score:",
-    np.percentile(q, [0, 5, 25, 50, 75, 95, 100])
-)
-    print(
-    "[DEBUG] snr_norm:",
-    np.percentile(snr_norm, [5, 50, 95])
-)
-    print(
-        "[DEBUG] score:",
-        np.percentile(score_vals, [5, 50, 95])
+
+    # Hard physical gate
+    out["pass_conservative"] = (
+        (df["snr"] >= cfg.conservative_snr_min)
+        & (df["ellipticity"] <= cfg.conservative_ellip_max)
     )
-    print(
-        "[DEBUG] symmetry:",
-        np.percentile(symmetry, [5, 50, 95])
-    )
+
     return out
