@@ -1,14 +1,21 @@
 import numpy as np
 
+
 def compute_sqi_from_label_maps(
     fg_label_map: np.ndarray,
     bg_label_map: np.ndarray,
     spots_rc: np.ndarray,
+    spot_weights=None,
 ):
     """
-    Compute SQI₁ per cell using per-cell FG/BG label maps.
+    Compute SQI per cell using per-cell FG/BG label maps.
 
-    spots_rc: (N,2) array of (row, col)
+    Parameters
+    ----------
+    spots_rc : (N, 2) array of (row, col)
+    spot_weights : (N,) array of per-spot quality weights, or None.
+        None → unit weights (count-based, backward-compatible).
+        Provided → quality-weighted accumulation.
     """
     fg_area = {}
     bg_area = {}
@@ -22,18 +29,19 @@ def compute_sqi_from_label_maps(
         fg_area[lab] = (fg_label_map == lab).sum()
         bg_area[lab] = (bg_label_map == lab).sum()
 
-    # count spots
-    fg_counts = {lab: 0 for lab in labels}
-    bg_counts = {lab: 0 for lab in labels}
+    # accumulate (weighted) spot counts
+    fg_counts = {lab: 0.0 for lab in labels}
+    bg_counts = {lab: 0.0 for lab in labels}
 
-    for r, c in spots_rc:
+    for i, (r, c) in enumerate(spots_rc):
+        w = float(spot_weights[i]) if spot_weights is not None else 1.0
         lab_fg = fg_label_map[r, c]
         lab_bg = bg_label_map[r, c]
 
         if lab_fg > 0:
-            fg_counts[lab_fg] += 1
+            fg_counts[lab_fg] += w
         elif lab_bg > 0:
-            bg_counts[lab_bg] += 1
+            bg_counts[lab_bg] += w
 
     # compute SQI
     for lab in labels:

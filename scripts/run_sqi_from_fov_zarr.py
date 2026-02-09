@@ -227,20 +227,22 @@ def main(args):
         force=args.force,
     )
 
-    # Filter to permissive-pass spots for SQI computation
-    spots_pass = spots_df[spots_df["pass_permissive"]].copy()
+    # Filter to conservative-pass spots, use q_score as weight
+    spots_pass = spots_df[spots_df["pass_conservative"]].copy()
     spots_int = np.column_stack([
         np.clip(spots_pass["row"].values.astype(np.int32), 0, labels.shape[0] - 1),
         np.clip(spots_pass["col"].values.astype(np.int32), 0, labels.shape[1] - 1),
     ])
+    weights = spots_pass["q_score"].values.astype(np.float32)
     print(f"       n_spots_total = {len(spots_df)}, n_pass = {len(spots_int)}")
 
     # =====================================================
-    # 7. Compute SQI
+    # 7. Compute SQI (quality-weighted)
     # =====================================================
     print("[7/7] Computing SQI ...")
     sqi, fg_counts, bg_counts = compute_sqi_from_label_maps(
         fg_label_map, bg_label_map, spots_int,
+        spot_weights=weights,
     )
 
     # --- Save results ---
@@ -263,7 +265,10 @@ def main(args):
         w = csv.writer(f)
         w.writerow(["cell_id", "sqi", "fg_spots", "bg_spots"])
         for cid in sorted(sqi.keys()):
-            w.writerow([cid, sqi[cid], fg_counts.get(cid, 0), bg_counts.get(cid, 0)])
+            w.writerow([cid,
+                        f"{sqi[cid]:.4f}" if np.isfinite(sqi[cid]) else "nan",
+                        f"{fg_counts.get(cid, 0):.4f}",
+                        f"{bg_counts.get(cid, 0):.4f}"])
 
     # Plot
     import matplotlib
