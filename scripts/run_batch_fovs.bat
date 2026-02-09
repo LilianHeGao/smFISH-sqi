@@ -6,7 +6,7 @@ set DATA_FLD=\\192.168.0.116\durian3\Lilian\022425_FTD_smFISH_MBP_NRGN\coverslip
 set CACHE_ROOT=\\192.168.0.116\durian3\Lilian\merfish_sqi_cache
 set OUT_ROOT=output\022425_FTD_smFISH_MBP_NRGN\coverslip1_controls\MBP_NRGN_set5
 set ZARR_BASE=\\192.168.0.116\durian3\Lilian\022425_FTD_smFISH_MBP_NRGN\coverslip1_controls\MBP_NRGN_set5
-set FOV_LIST=020 040
+set FOV_LIST=20 40
 
 for %%F in (%FOV_LIST%) do (
     echo ============================================================
