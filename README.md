@@ -4,7 +4,7 @@
 
 # SQI — Sample Quality Index for smFISH
 
-<p align="center">
+<p align="left">
   <img src="https://img.shields.io/badge/python-3.9%2B-blue"/>
   <img src="https://img.shields.io/badge/license-MIT-lightgrey"/>
 </p>
