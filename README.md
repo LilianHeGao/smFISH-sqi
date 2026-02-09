@@ -1,12 +1,17 @@
 <p align="center">
-  <img src="assets/sqi_logo.png" width="220"/>
+  <img src="assets/logo/sqi_logo.png" width="320"/>
 </p>
 
-<h1 align="center">SQI</h1>
-<p align="center">
-  <strong>Sample quality index</strong><br/>
-  A modular biological sample-level QC stack for smFISH / MERFISH imaging data
-</p>
+---
+
+# SQI – imaging-based sample quality control for smFISH / MERFISH
+
+**SQI (Sample Quality Index)** is a modular, image-derived quality control (QC) framework for
+**smFISH and MERFISH spatial transcriptomics data**.
+
+Unlike molecule-level chemistry or probe-centric pipelines, SQI focuses on **biological sample–level
+integrity**, quantifying RNA quality, spatial signal structure, and tissue organization directly
+from imaging features.
 
 <p align="center">
   <img src="https://img.shields.io/badge/status-active-success"/>
@@ -18,32 +23,33 @@
 
 ## Overview
 
-**SQI (Sample Quality Index)** is a modular, sample-level quality control framework designed for  
-**smFISH / MERFISH imaging-based spatial transcriptomics**.
+Imaging-based spatial transcriptomics experiments are highly sensitive to **sample preservation,
+RNA integrity, and tissue handling**. While existing pipelines emphasize spot calling, decoding,
+and cell segmentation, there is limited support for **quantitative, sample-level QC** prior to
+downstream biological interpretation.
 
-Rather than focusing on molecule-level chemistry or probe design, SQI quantifies **sample integrity,
-spatial signal structure, and image-derived RNA quality** directly from imaging data.
+SQI addresses this gap by providing a **modular QC stack** that operates directly in image space,
+enabling:
 
-SQI is designed to:
-- assess whether a biological sample is *fit-for-use* in MERFISH-style experiments
-- support **dataset-level and cell-level QC**
-- integrate seamlessly with existing spot-calling and segmentation pipelines
+- early identification of low-quality or compromised samples
+- comparison of RNA quality across samples and experiments
+- reproducible, interpretable QC metrics at both **dataset** and **cell** levels
 
 ---
 
 ## Key design principles
 
 - **Sample-level first**  
-  QC metrics are defined at the *biological sample* level, not just FOVs or individual spots.
+  QC metrics are defined at the biological sample level, rather than individual FOVs or spots.
 
 - **Imaging-native**  
-  All metrics are derived from image-space features (spots, masks, spatial structure).
+  All metrics are computed from image-derived features (spots, masks, spatial structure).
 
-- **Modular & extensible**  
+- **Modular and extensible**  
   Each QC component can be enabled, disabled, or replaced independently.
 
-- **Model-agnostic**  
-  Compatible with multiple spot callers, segmenters, and imaging platforms.
+- **Method-agnostic**  
+  Compatible with multiple spot-calling, segmentation, and imaging platforms.
 
 ---
 
@@ -51,11 +57,11 @@ SQI is designed to:
 
 | Module | Description |
 |------|------------|
-| Foreground / background separation | Tissue-aware valid mask construction |
-| Spot statistics | Density, intensity, spatial consistency |
+| Tissue / foreground detection | Construction of tissue-aware valid masks |
+| Spot statistics | Density, intensity, and spatial consistency |
 | Cell-level aggregation | Per-cell RNA signal quality metrics |
-| Spatial structure | Local clustering, neighborhood coherence |
-| Dataset summary | Sample-level SQI score and diagnostics |
+| Spatial structure | Local clustering and neighborhood coherence |
+| Dataset summary | Sample-level SQI scores and diagnostics |
 
 ---
 
