@@ -59,31 +59,31 @@ conda install pytorch torchvision torchaudio pytorch-cuda=12.1 -c pytorch -c nvi
 Different microscopes may rotate tiles differently. Run this once per dataset to pick the correct `--rot_k` value (0–3):
 
 ```bash
-python scripts/test_mosaic_orientation.py \
-    --data_fld /path/to/parent_folder \
-    --out orientation_test.png
+python scripts\test_mosaic_orientation.py ^
+  --data_fld C:\path\to\parent_folder ^
+  --out orientation_test.png
 ```
 
 ### Run on a single FOV
 
 ```bash
-python scripts/run_sqi_from_fov_zarr.py \
-  --fov_zarr  /path/to/fov.zarr \
-  --data_fld  /path/to/parent_folder \
-  --cache_root /path/to/cache \
-  --out_root   /path/to/output
+python scripts\run_sqi_from_fov_zarr.py ^
+  --fov_zarr  C:\path\to\fov.zarr ^
+  --data_fld  C:\path\to\parent_folder ^
+  --cache_root C:\path\to\cache ^
+  --out_root   C:\path\to\output
 ```
 
 ### Run a batch
 Run a batch randomly selects `n_fovs` FOVs from the data folder and runs the full SQI pipeline independently on each.
 
 ```bash
-python scripts/run_batch_fovs.py \
-  --data_fld   /path/to/parent_folder \
-  --cache_root /path/to/cache \
-  --out_root   /path/to/output \
-  --n_fovs 10 \
-  --rot_k 1 \
+python scripts\run_batch_fovs.py ^
+  --data_fld   C:\path\to\parent_folder ^
+  --cache_root C:\path\to\cache ^
+  --out_root   C:\path\to\output ^
+  --n_fovs 10 ^
+  --rot_k 1 ^
   --seed 42
 ```
 
