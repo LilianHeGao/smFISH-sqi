@@ -21,11 +21,11 @@ SQI(cell) = weighted_spot_density(cell-proximal) / weighted_spot_density(cell-di
 ```
 
 - **SQI >> 1** → high quality RNA concentrates near cells → good sample
-- **SQI ≈ 1** → RNA diffusely spread with low quality→ likely degraded
+- **SQI ≈ 1** → RNA diffusely spread with low quality → likely degraded
 
 Per-cell scores are aggregated to a FOV-level summary. A built-in null model (uniform pseudo-spots) validates that the metric is capturing real signal, not noise.
 
-**Scope:** designed for sparse-to-moderate density tissues. In very dense tissues (e.g. mouse brain), foreground/background separation breaks down.
+**Scope:** designed for sparse-to-moderate density tissues. In very dense tissues (e.g. mouse brain), foreground/background separation breaks down — and SQI will tell you so automatically (see [Reliability check](#reliability-check) below).
 
 ## Pipeline
 
@@ -42,14 +42,18 @@ pip install -e .
 # GPU PyTorch (CUDA 12.1) — after pip install to avoid conflicts
 conda install pytorch torchvision torchaudio pytorch-cuda=12.1 -c pytorch -c nvidia --solver=libmamba
 ```
+
 ### Check tile orientation first
 
 Different microscopes may rotate tiles differently. Run this once per dataset to pick the correct `--rot_k` value (0–3):
+
 ```bash
 python scripts/test_mosaic_orientation.py \
     --data_fld /path/to/parent_folder \
     --out orientation_test.png
 ```
+
+### Run on a single FOV
 
 ```bash
 python scripts/run_sqi_from_fov_zarr.py \
@@ -59,14 +63,67 @@ python scripts/run_sqi_from_fov_zarr.py \
   --out_root   /path/to/output
 ```
 
+### Run a batch
+
+```bash
+python scripts/run_batch_fovs.py \
+  --data_fld   /path/to/parent_folder \
+  --cache_root /path/to/cache \
+  --out_root   /path/to/output \
+  --n_fovs 10 \
+  --rot_k 1 \
+  --seed 42
+```
+
 ## Outputs
+
+Each FOV produces a self-contained QC report:
 
 | File | What it is |
 |------|------------|
-| `sqi_summary.json` | FOV-level median SQI, per-channel breakdown |
+| `sqi_summary.json` | FOV-level median SQI, per-channel breakdown, sanity AUC, reliability flag |
 | `sqi_per_cell.csv` | Per-cell SQI and FG/BG spot counts |
-| `sqi_distribution.png` | log₁₀(SQI) histograms per channel |
-| `sqi_sanity_check.png` | Real vs null SQI overlay |
+| `sqi_per_cell_per_channel.csv` | Per-cell SQI broken down by RNA channel |
+| `tissue_overview.png` | Low-res tissue mask with current FOV highlighted |
+| `channel_projections.png` | Side-by-side raw image vs. raw + detected spots, per channel |
+| `masks_overlay.png` | DAPI with nuclei, FG (cell-proximal), and BG (cell-distal) regions overlaid |
+| `sqi_distribution.png` | log₁₀(SQI) histograms per channel + total |
+| `sqi_sanity_check.png` | Real vs null SQI distribution overlay |
+
+### Example outputs
+
+**Human control (smFISH) — good separation:**
+
+<p align="center">
+  <img src="assets/examples/human_control/masks_overlay.png" width="45%"/>
+  <img src="assets/examples/human_control/sqi_sanity_check.png" width="45%"/>
+</p>
+
+**Mouse brain (6-OHDA) — dense tissue, SQI unreliable:**
+
+<p align="center">
+  <img src="assets/examples/mouse_6ohda/masks_overlay.png" width="45%"/>
+  <img src="assets/examples/mouse_6ohda/sqi_sanity_check.png" width="45%"/>
+</p>
+
+## Reliability check
+
+Not every tissue is suitable for FG/BG-based QC. SQI includes a built-in reliability check using the sanity-check AUC — the separation between real spot SQI and null (uniformly sampled) SQI.
+
+- **AUC ≥ 0.6** → `sqi_reliable: true` — FG/BG separation holds, SQI scores are meaningful
+- **AUC < 0.6** → `sqi_reliable: false` — pipeline prints a warning:
+
+```
+WARNING: FG/BG separation insufficient for this FOV (AUC=0.53), SQI may not be informative.
+```
+
+This typically happens when tissue is too dense for a clear background region to exist (e.g. mouse brain), or when the sample is severely degraded. The flag is reported in `sqi_summary.json` so batch-level analysis can filter accordingly.
+
+<p align="center">
+  <img src="assets/examples/auc_across_conditions.png" width="60%"/>
+</p>
+
+In the example above, human control tissue (AUC ~0.7) passes reliably, while human FTD (disease-affected, AUC ~0.55) and mouse brain (high density, AUC ~0.55) are flagged — for different biological reasons, but with the same practical consequence: SQI scores on those FOVs should be interpreted with caution.
 
 ## Project structure
 
