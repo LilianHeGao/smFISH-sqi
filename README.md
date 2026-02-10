@@ -112,7 +112,7 @@ Each FOV produces a self-contained QC report:
 ### Example outputs
 
 Example QC reports from **human Frontotemporal Dementia (FTD)** cases.  
-Each example shows the per-FOV QC report images:
+Each example shows the 3 per-FOV QC report images:
 tissue overview, per-channel projections with spots, masks overlay.
 
 <p align="center">
