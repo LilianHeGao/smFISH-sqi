@@ -198,7 +198,7 @@ def plot_masks_overlay(
     """
     DAPI image with nuclei boundaries, FG ring, and BG region overlaid.
     """
-    from skimage.segmentation import find_boundaries
+    from scipy.ndimage import binary_erosion
 
     fig, ax = plt.subplots(figsize=(7, 7))
 
@@ -206,8 +206,9 @@ def plot_masks_overlay(
     vmax = np.percentile(dapi, 99.5)
     ax.imshow(dapi, cmap="gray", vmin=0, vmax=vmax)
 
-    # Nuclei boundaries (blue)
-    boundaries = find_boundaries(nuclei_labels, mode="outer")
+    # Nuclei boundaries (blue) — outer edge via erosion (no skimage needed)
+    nuc_mask = nuclei_labels > 0
+    boundaries = nuc_mask & ~binary_erosion(nuc_mask)
     blue_overlay = np.zeros((*dapi.shape[:2], 4), dtype=np.float32)
     blue_overlay[boundaries] = [0.2, 0.4, 1.0, 0.7]
     ax.imshow(blue_overlay)
