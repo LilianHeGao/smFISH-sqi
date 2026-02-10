@@ -116,8 +116,8 @@ Each example shows the 3 per-FOV QC report images:
 tissue overview, per-channel projections with spots, masks overlay.
 
 <p align="center">
-  <img src="assets/examples/human_FTD/tissue_overview.png" width="30%"/>
-  <img src="assets/examples/human_FTD/channel_projections.png" width="30%"/>
+  <img src="assets/examples/human_FTD/tissue_overview.png" width="45%"/>
+  <img src="assets/examples/human_FTD/channel_projections.png" width="45%"/>
 </p>
 <p align="center">
   <img src="assets/examples/human_FTD/sqi_distribution.png" width="100%"/>
