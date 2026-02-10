@@ -1,4 +1,4 @@
-mouse
+
 # SQI — Sample Quality Index for smFISH
 
 <p align="left">
