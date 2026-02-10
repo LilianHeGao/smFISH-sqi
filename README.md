@@ -111,6 +111,8 @@ tissue overview, per-channel projections with spots, masks overlay, SQI distribu
 <p align="center">
   <img src="assets/examples/human_FTD/tissue_overview.png" width="30%"/>
   <img src="assets/examples/human_FTD/channel_projections.png" width="30%"/>
+</p>
+<p align="center">
   <img src="assets/examples/human_FTD/sqi_distribution.png" width="30%"/>
 </p>
 ## Reliability check
