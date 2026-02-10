@@ -27,9 +27,20 @@ Per-cell scores are aggregated to a FOV-level summary. A built-in null model (un
 
 **Scope:** designed for sparse-to-moderate density tissues. In very dense tissues (e.g. mouse brain), foreground/background separation breaks down — and SQI will tell you so automatically (see [Reliability check](#reliability-check) below).
 
-## Pipeline
+## Pipeline (Overview)
 
-DAPI image → Cellpose segmentation → FG/BG mask construction → Spotiflow spot detection → per-spot quality scoring → SQI computation → sanity check
+DAPI image
+  → Cellpose segmentation
+  → FG/BG mask construction
+
+Per-channel pixel signal
+  → Spotiflow spot detection
+  → per-spot quality scoring
+  (parallel across channels)
+
+→ SQI computation
+→ sanity checks
+
 
 Everything runs from a single script. Intermediate results are cached.
 
