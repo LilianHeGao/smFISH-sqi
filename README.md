@@ -109,11 +109,28 @@ Each FOV produces a self-contained QC report:
 | `sqi_distribution.png` | log₁₀(SQI) histograms per channel + total |
 | `sqi_sanity_check.png` | Real vs null SQI distribution overlay |
 
+### sqi_summary.json
+
+```json
+{
+  "fov": "020",
+  "median_sqi": 1.34,
+  "mean_log10_sqi": 0.13,
+  "per_channel": {
+    "ch0": {"n_pass": 10668, "median_sqi": 1.29},
+    "ch1": {"n_pass": 254, "median_sqi": 3.44},
+    "ch2": {"n_pass": 2937, "median_sqi": 1.38}
+  },
+  "sanity_auc": 0.72,
+  "sqi_reliable": true
+}
+```
+
+`sqi_reliable` is the key field for batch-level filtering — if `false`, downstream analysis should treat this FOV with caution.
+
 ### Example outputs
 
-Example QC reports from **human Frontotemporal Dementia (FTD)** cases.  
-Each example shows the 3 per-FOV QC report images:
-tissue overview, per-channel projections with spots, masks overlay.
+Example QC report from a **human Frontotemporal Dementia (FTD)** case, showing the per-FOV diagnostic images:
 
 <p align="center">
   <img src="assets/examples/human_FTD/tissue_overview.png" width="45%"/>
