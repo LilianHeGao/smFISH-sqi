@@ -75,6 +75,7 @@ python scripts/run_sqi_from_fov_zarr.py \
 ```
 
 ### Run a batch
+Run a batch randomly selects `n_fovs` FOVs from the data folder and runs the full SQI pipeline independently on each.
 
 ```bash
 python scripts/run_batch_fovs.py \
@@ -103,6 +104,20 @@ Each FOV produces a self-contained QC report:
 
 ### Example outputs
 
+Example QC reports from **human Frontotemporal Dementia (FTD)** cases.  
+Each example shows the full 5-panel per-FOV QC report:
+tissue overview, per-channel projections with spots, masks overlay, SQI distribution, and sanity check.
+
+## Reliability check
+
+Not every tissue is suitable for FG/BG-based QC. SQI includes a built-in reliability check using the sanity-check AUC — the separation between real spot SQI and null (uniformly sampled) SQI.
+
+- **AUC ≥ 0.6** → `sqi_reliable: true` — FG/BG separation holds, SQI scores are meaningful
+- **AUC < 0.6** → `sqi_reliable: false` — pipeline prints a warning:
+
+```
+WARNING: FG/BG separation insufficient for this FOV (AUC=0.53), SQI may not be informative.
+```
 **Human control (smFISH) — good separation:**
 
 <p align="center">
@@ -116,17 +131,6 @@ Each FOV produces a self-contained QC report:
   <img src="assets/examples/mouse_6ohda/masks_overlay.png" width="45%"/>
   <img src="assets/examples/mouse_6ohda/sqi_sanity_check.png" width="45%"/>
 </p>
-
-## Reliability check
-
-Not every tissue is suitable for FG/BG-based QC. SQI includes a built-in reliability check using the sanity-check AUC — the separation between real spot SQI and null (uniformly sampled) SQI.
-
-- **AUC ≥ 0.6** → `sqi_reliable: true` — FG/BG separation holds, SQI scores are meaningful
-- **AUC < 0.6** → `sqi_reliable: false` — pipeline prints a warning:
-
-```
-WARNING: FG/BG separation insufficient for this FOV (AUC=0.53), SQI may not be informative.
-```
 
 This typically happens when tissue is too dense for a clear background region to exist (e.g. mouse brain), or when the sample is severely degraded. The flag is reported in `sqi_summary.json` so batch-level analysis can filter accordingly.
 
