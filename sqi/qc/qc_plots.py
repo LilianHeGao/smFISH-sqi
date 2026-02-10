@@ -154,6 +154,7 @@ def plot_channel_projections_with_spots(
 
     for i, ch in enumerate(channels):
         img = channel_images[ch]
+        img_h, img_w = img.shape[:2]
         vmin = np.percentile(img, 1)
         vmax = np.percentile(img, 99.5)
 
@@ -167,10 +168,22 @@ def plot_channel_projections_with_spots(
         axes[i, 1].imshow(img, cmap="gray", vmin=vmin, vmax=vmax)
         pts = spots_per_channel.get(ch)
         if pts is not None and len(pts) > 0:
-            axes[i, 1].scatter(pts[:, 1], pts[:, 0],
+            rows, cols = pts[:, 0], pts[:, 1]
+            # Scale spots if they were detected at a different resolution
+            if len(rows) > 0:
+                max_spot_row = np.max(rows)
+                max_spot_col = np.max(cols)
+                if max_spot_row > img_h * 1.05 or max_spot_col > img_w * 1.05:
+                    scale_r = img_h / (max_spot_row + 1)
+                    scale_c = img_w / (max_spot_col + 1)
+                    rows = rows * scale_r
+                    cols = cols * scale_c
+            axes[i, 1].scatter(cols, rows,
                                s=1, c="red", alpha=0.5, linewidths=0)
-        axes[i, 1].set_title(f"ch{ch} + spots ({len(pts) if pts is not None else 0})",
-                              fontsize=9)
+        n_pts = len(pts) if pts is not None else 0
+        axes[i, 1].set_title(f"ch{ch} + spots ({n_pts})", fontsize=9)
+        axes[i, 1].set_xlim(0, img_w)
+        axes[i, 1].set_ylim(img_h, 0)
         axes[i, 1].set_xticks([])
         axes[i, 1].set_yticks([])
 
@@ -200,29 +213,33 @@ def plot_masks_overlay(
     """
     from scipy.ndimage import binary_erosion
 
+    # Reference shape from labels/masks (they always match)
+    H, W = nuclei_labels.shape[:2]
+
     fig, ax = plt.subplots(figsize=(7, 7))
 
-    # Base: DAPI
+    # Base: DAPI (may differ in size from labels — use extent to align)
     vmax = np.percentile(dapi, 99.5)
-    ax.imshow(dapi, cmap="gray", vmin=0, vmax=vmax)
+    ax.imshow(dapi, cmap="gray", vmin=0, vmax=vmax,
+              extent=[0, W, H, 0])  # align to labels pixel grid
 
     # Nuclei boundaries (blue) — outer edge via erosion (no skimage needed)
     nuc_mask = nuclei_labels > 0
     boundaries = nuc_mask & ~binary_erosion(nuc_mask)
-    blue_overlay = np.zeros((*dapi.shape[:2], 4), dtype=np.float32)
+    blue_overlay = np.zeros((H, W, 4), dtype=np.float32)
     blue_overlay[boundaries] = [0.2, 0.4, 1.0, 0.7]
-    ax.imshow(blue_overlay)
+    ax.imshow(blue_overlay, extent=[0, W, H, 0])
 
     # FG ring (green) — fg_mask excluding nucleus interior
     fg_ring = fg_mask & (nuclei_labels == 0)
-    green_overlay = np.zeros((*dapi.shape[:2], 4), dtype=np.float32)
+    green_overlay = np.zeros((H, W, 4), dtype=np.float32)
     green_overlay[fg_ring] = [0.2, 0.8, 0.2, 0.25]
-    ax.imshow(green_overlay)
+    ax.imshow(green_overlay, extent=[0, W, H, 0])
 
     # BG (red)
-    red_overlay = np.zeros((*dapi.shape[:2], 4), dtype=np.float32)
+    red_overlay = np.zeros((H, W, 4), dtype=np.float32)
     red_overlay[bg_mask] = [0.9, 0.2, 0.2, 0.25]
-    ax.imshow(red_overlay)
+    ax.imshow(red_overlay, extent=[0, W, H, 0])
 
     # Legend
     from matplotlib.patches import Patch
