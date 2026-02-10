@@ -35,7 +35,10 @@ from sqi.qc.rings import (
     CellProximalConfig, build_cell_proximal_and_distal_masks, per_cell_fg_bg,
 )
 from sqi.qc.metrics import compute_sqi_from_label_maps, sqi_sanity_check
-from sqi.qc.qc_plots import plot_sqi_distribution, plot_sqi_real_vs_null
+from sqi.qc.qc_plots import (
+    plot_sqi_distribution, plot_sqi_real_vs_null,
+    plot_channel_projections_with_spots, plot_masks_overlay,
+)
 from sqi.spot_calling.spotiflow_backend import SpotiflowBackend, SpotiflowConfig
 from sqi.spot_features.features import compute_spot_features, SpotFeatureConfig
 from sqi.spot_features.quality import compute_quality_scores
@@ -63,20 +66,22 @@ def detect_spots_spotiflow(
     prob_thresh: float = 0.5,
     force: bool = False,
 ):
-    """Detect spots per channel, compute per-channel features + quality, cache as parquet."""
+    """Detect spots per channel, compute per-channel features + quality, cache as parquet.
+
+    Returns (df, ch_images) where ch_images = {ch_idx: 2D float32 array}.
+    """
     parquet_path = cache_dir / "spots.parquet"
     meta_path = cache_dir / "spots_meta.json"
 
-    if parquet_path.exists() and meta_path.exists() and not force:
-        print("       Loading cached spots parquet")
-        return read_spots_parquet(str(parquet_path))
-
+    # Always load channel images (needed for QC plots even when spots are cached)
     im = read_multichannel_from_conv_zarr(fov_zarr)
     n_channels = im.shape[0]
     spot_channel_indices = list(range(n_channels - 1))
-
-    # Pre-compute z-projected images per channel
     ch_images = {ch: _zproject(im[ch]) for ch in spot_channel_indices}
+
+    if parquet_path.exists() and meta_path.exists() and not force:
+        print("       Loading cached spots parquet")
+        return read_spots_parquet(str(parquet_path)), ch_images
 
     # Detect per channel
     sf_cfg = SpotiflowConfig(pretrained_model=model, prob_thresh=prob_thresh)
@@ -118,7 +123,7 @@ def detect_spots_spotiflow(
         "per_channel": {str(k): v for k, v in all_metas.items()},
     }, str(meta_path))
 
-    return df
+    return df, ch_images
 
 
 def get_or_build_tissue_mask(mosaic_tif: str, cache_root: str) -> np.ndarray:
@@ -238,7 +243,7 @@ def main(args):
     # 6. Spot detection (Spotiflow, per-channel features + quality)
     # =====================================================
     print("[6/7] Detecting spots (Spotiflow) ...")
-    spots_df = detect_spots_spotiflow(
+    spots_df, ch_images = detect_spots_spotiflow(
         fov_zarr, labels, fg_mask, bg_mask, cache_dir,
         model=args.spot_model,
         prob_thresh=args.prob_thresh,
@@ -380,6 +385,22 @@ def main(args):
     fig_sc.tight_layout()
     fig_sc.savefig(str(out_dir / "sqi_sanity_check.png"), dpi=200)
     plt.close(fig_sc)
+
+    # Fig 2: channel projections + spots
+    spots_per_ch = {}
+    for ch in channels:
+        ch_sub = spots_df[spots_df["channel"] == ch]
+        spots_per_ch[int(ch)] = ch_sub[["row", "col"]].values
+    plot_channel_projections_with_spots(
+        ch_images, spots_per_ch, fov_id,
+        out_path=str(out_dir / "channel_projections.png"),
+    )
+
+    # Fig 3: masks overlay on DAPI
+    plot_masks_overlay(
+        dapi, labels, fg_mask, bg_mask, fov_id,
+        out_path=str(out_dir / "masks_overlay.png"),
+    )
 
     print("=" * 50)
     print(f"[DONE] FOV {fov_id}")
