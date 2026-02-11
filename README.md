@@ -19,7 +19,7 @@ Most spatial transcriptomics pipelines focus on downstream spot calling, decodin
   <img src="assets/examples/human_control/sqi_sanity_check.png" width="45%"/>
 </p>
 
-## What it measures
+## 📊 What it measures
 
 For each cell, SQI computes a signal-to-noise ratio:
 
@@ -34,7 +34,7 @@ Per-cell scores are aggregated to a FOV-level summary. A built-in null model (as
 
 **Scope:** designed for sparse-to-moderate density tissues. In very dense tissues (e.g. mouse brain), foreground/background separation breaks down — and SQI will tell you so automatically (see [Reliability check](#reliability-check) below).
 
-## Pipeline (Overview)
+## ⚙️ Pipeline (Overview)
 
 DAPI image
   → Cellpose segmentation
@@ -51,7 +51,7 @@ Per-channel pixel signal
 
 Everything runs from a single script. Intermediate results are cached.
 
-## Quickstart
+## 🚀 Quickstart
 
 ```bash
 conda create -n sqi python=3.11 -y && conda activate sqi
