@@ -55,10 +55,14 @@ Everything runs from a single script. Intermediate results are cached.
 
 ```bash
 conda create -n sqi python=3.11 -y && conda activate sqi
+python -m pip install --upgrade pip setuptools wheel
 pip install -e .
 
 # GPU PyTorch (CUDA 12.1) — after pip install to avoid conflicts
 conda install pytorch torchvision torchaudio pytorch-cuda=12.1 -c pytorch -c nvidia --solver=libmamba
+
+# Optional (only for napari viewer scripts)
+# pip install -e ".[napari]"
 ```
 
 ### 🧪 Check tile orientation first
@@ -180,4 +184,6 @@ configs/           — configuration files
 
 ## Dependencies
 
-numpy · scipy · scikit-image · matplotlib · tifffile · zarr · cellpose · spotiflow · pandas · pyarrow
+Core: numpy · scipy · scikit-image · matplotlib · tifffile · zarr · dask[array] · tqdm · cellpose · spotiflow · pandas · pyarrow
+
+Optional: napari (for interactive viewer scripts)

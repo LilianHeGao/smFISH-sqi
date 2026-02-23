@@ -1,3 +1,7 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "merfish-sqi"
 version = "0.1.0"
@@ -9,11 +13,16 @@ dependencies = [
   "matplotlib",
   "tifffile",
   "zarr",
+  "dask[array]",
+  "tqdm",
   "cellpose",
   "spotiflow",
   "pandas",
   "pyarrow",
 ]
+
+[project.optional-dependencies]
+napari = ["napari"]
 
 # NOTE: torch/torchvision/torchaudio are NOT listed above to avoid
 # pip pulling CPU-only versions that conflict with CUDA conda packages.

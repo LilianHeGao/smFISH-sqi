@@ -22,7 +22,6 @@ import glob
 import os
 
 import numpy as np
-import tifffile
 from tqdm import tqdm
 
 import matplotlib
