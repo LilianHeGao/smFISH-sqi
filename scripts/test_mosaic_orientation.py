@@ -141,9 +141,13 @@ def main():
                  f"({len(ims_raw)} tiles, resc={resc}, icol={icol}, frame={frame})",
                  fontsize=13)
     fig.tight_layout()
-    fig.savefig(args.out, dpi=150)
+    out_path = os.path.abspath(args.out)
+    out_dir = os.path.dirname(out_path)
+    if out_dir and not os.path.exists(out_dir):
+        os.makedirs(out_dir, exist_ok=True)
+    fig.savefig(out_path, dpi=150)
     plt.close(fig)
-    print(f"\nSaved: {args.out}")
+    print(f"\nSaved: {out_path}")
     print("Pick the rot_k value where FOV labels match their spatial positions,")
     print("then pass --rot_k <value> to run_batch_fovs.py.")
 
