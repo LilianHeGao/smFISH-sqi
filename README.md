@@ -98,6 +98,22 @@ python scripts\run_batch_fovs.py ^
   --seed 42
 ```
 
+If your data is split as `set1`, `set2`, ... under one parent folder, you can pool sets in one run:
+
+```bash
+python scripts\run_batch_fovs.py ^
+  --data_fld   N:\Lilian\021926_DC_smFISH_MBP_NGRN ^
+  --set 1 2 3 4 5 ^
+  --cache_root N:\Lilian\021926_DC_smFISH_MBP_NGRN\cache ^
+  --out_root   N:\Lilian\021926_DC_smFISH_MBP_NGRN\sqi ^
+  --n_fovs 10 ^
+  --rot_k 2 ^
+  --seed 42
+```
+
+In multi-set mode, outputs are written under per-set subfolders:
+`<out_root>\set1\...`, `<out_root>\set2\...` (same for cache).
+
 ## 📦 Outputs
 
 Each FOV produces a self-contained QC report:
