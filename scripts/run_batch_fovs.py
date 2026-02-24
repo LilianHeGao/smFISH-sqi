@@ -6,6 +6,7 @@ with all selected FOVs highlighted.
 Called by run_batch_fovs.bat.
 """
 import argparse
+import csv
 import glob
 import json
 import os
@@ -146,6 +147,192 @@ def compute_fov_bbox_mosaic(
     return (r0, c0, r1, c1)
 
 
+def _load_log10_sqi_from_csv(csv_path: Path) -> np.ndarray:
+    """Load log10(SQI) values from sqi_per_cell.csv."""
+    if not csv_path.exists():
+        return np.array([], dtype=np.float32)
+
+    vals = []
+    with open(csv_path, "r", newline="") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            try:
+                sqi = float(row.get("sqi", "nan"))
+            except (TypeError, ValueError):
+                continue
+            if np.isfinite(sqi) and sqi > 0:
+                vals.append(np.log10(sqi))
+
+    return np.array(vals, dtype=np.float32)
+
+
+def _load_log10_sanity_from_json(json_path: Path) -> tuple[np.ndarray, np.ndarray]:
+    """Load log10(real/null SQI) values saved by run_sqi_from_fov_zarr.py."""
+    if not json_path.exists():
+        return np.array([], dtype=np.float32), np.array([], dtype=np.float32)
+
+    try:
+        payload = json.loads(json_path.read_text())
+    except Exception:
+        return np.array([], dtype=np.float32), np.array([], dtype=np.float32)
+
+    real = np.array(payload.get("real_sqi", []), dtype=float)
+    null = np.array(payload.get("null_sqi", []), dtype=float)
+
+    real = real[np.isfinite(real) & (real > 0)]
+    null = null[np.isfinite(null) & (null > 0)]
+
+    return np.log10(real).astype(np.float32), np.log10(null).astype(np.float32)
+
+
+def _shared_bins(arrays: list[np.ndarray], n_bins: int = 50) -> np.ndarray | None:
+    arrays = [a for a in arrays if a is not None and len(a) > 0]
+    if not arrays:
+        return None
+
+    vals = np.concatenate(arrays)
+    if len(vals) == 0:
+        return None
+
+    vmin = float(np.min(vals))
+    vmax = float(np.max(vals))
+    if not np.isfinite(vmin) or not np.isfinite(vmax):
+        return None
+    if vmax <= vmin:
+        vmin -= 0.5
+        vmax += 0.5
+
+    pad = 0.05 * (vmax - vmin)
+    return np.linspace(vmin - pad, vmax + pad, n_bins + 1)
+
+
+def _density_stack(arrays: list[np.ndarray], bins: np.ndarray) -> np.ndarray | None:
+    rows = []
+    for arr in arrays:
+        if arr is None or len(arr) == 0:
+            continue
+        hist, _ = np.histogram(arr, bins=bins, density=True)
+        rows.append(hist)
+    if not rows:
+        return None
+    return np.vstack(rows)
+
+
+def _mann_whitney_auc(real_log: np.ndarray, null_log: np.ndarray) -> float:
+    if len(real_log) < 5 or len(null_log) < 5:
+        return float("nan")
+    u = 0.0
+    for r in real_log:
+        u += np.sum(r > null_log) + 0.5 * np.sum(r == null_log)
+    return float(u / (len(real_log) * len(null_log)))
+
+
+def _save_set_distribution_avg(
+    out_path: Path,
+    set_name: str,
+    fov_logs: list[np.ndarray],
+) -> bool:
+    bins = _shared_bins(fov_logs, n_bins=50)
+    if bins is None:
+        return False
+
+    stack = _density_stack(fov_logs, bins)
+    if stack is None:
+        return False
+
+    import matplotlib.pyplot as plt
+
+    centers = 0.5 * (bins[:-1] + bins[1:])
+    mean_d = stack.mean(axis=0)
+    std_d = stack.std(axis=0)
+    pooled = np.concatenate(fov_logs) if fov_logs else np.array([], dtype=np.float32)
+
+    fig, ax = plt.subplots(figsize=(6, 4))
+    if len(pooled) > 0:
+        ax.hist(
+            pooled,
+            bins=bins,
+            density=True,
+            color="0.85",
+            alpha=0.5,
+            label="pooled",
+        )
+    ax.plot(centers, mean_d, color="tab:blue", lw=2, label="mean density")
+    ax.fill_between(
+        centers,
+        np.clip(mean_d - std_d, 0, None),
+        mean_d + std_d,
+        color="tab:blue",
+        alpha=0.2,
+        label="±1 std",
+    )
+    ax.axvline(0, linestyle="--", color="k", linewidth=1)
+    ax.set_xlabel("log10(SQI)")
+    ax.set_ylabel("Density")
+    ax.set_title(f"SQI distribution avg — {set_name} ({len(fov_logs)} FOVs)")
+    ax.legend(fontsize=8)
+    fig.tight_layout()
+    fig.savefig(str(out_path), dpi=200)
+    plt.close(fig)
+    return True
+
+
+def _save_set_sanity_avg(
+    out_path: Path,
+    set_name: str,
+    real_logs: list[np.ndarray],
+    null_logs: list[np.ndarray],
+) -> bool:
+    bins = _shared_bins(real_logs + null_logs, n_bins=50)
+    if bins is None:
+        return False
+
+    stack_real = _density_stack(real_logs, bins)
+    stack_null = _density_stack(null_logs, bins)
+    if stack_real is None or stack_null is None:
+        return False
+
+    import matplotlib.pyplot as plt
+
+    centers = 0.5 * (bins[:-1] + bins[1:])
+    real_mean, real_std = stack_real.mean(axis=0), stack_real.std(axis=0)
+    null_mean, null_std = stack_null.mean(axis=0), stack_null.std(axis=0)
+
+    pooled_real = np.concatenate(real_logs)
+    pooled_null = np.concatenate(null_logs)
+    auc = _mann_whitney_auc(pooled_real, pooled_null)
+    auc_txt = f"{auc:.3f}" if np.isfinite(auc) else "N/A"
+
+    fig, ax = plt.subplots(figsize=(6, 4))
+    ax.plot(centers, null_mean, color="tab:gray", lw=2, label="null mean density")
+    ax.fill_between(
+        centers,
+        np.clip(null_mean - null_std, 0, None),
+        null_mean + null_std,
+        color="tab:gray",
+        alpha=0.2,
+        label="null ±1 std",
+    )
+    ax.plot(centers, real_mean, color="tab:blue", lw=2, label="real mean density")
+    ax.fill_between(
+        centers,
+        np.clip(real_mean - real_std, 0, None),
+        real_mean + real_std,
+        color="tab:blue",
+        alpha=0.2,
+        label="real ±1 std",
+    )
+    ax.axvline(0, linestyle="--", color="k", linewidth=1)
+    ax.set_xlabel("log10(SQI)")
+    ax.set_ylabel("Density")
+    ax.set_title(f"SQI sanity avg — {set_name} ({len(real_logs)} FOVs), AUC={auc_txt}")
+    ax.legend(fontsize=8)
+    fig.tight_layout()
+    fig.savefig(str(out_path), dpi=200)
+    plt.close(fig)
+    return True
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Batch SQI: auto-discover FOVs, run pipeline, generate tissue overview",
@@ -220,6 +407,7 @@ def main():
     # 2. Run pipeline on each FOV
     # --------------------------------------------------
     failed = []
+    successful_entries = []
     for i, entry in enumerate(selected):
         set_name = entry["set_name"]
         data_fld = entry["data_fld"]
@@ -259,6 +447,7 @@ def main():
             failed.append(label)
         else:
             print(f"[OK] FOV {label} done.")
+            successful_entries.append(entry)
 
     # --------------------------------------------------
     # 3. Generate tissue overview(s)
@@ -320,7 +509,60 @@ def main():
         overview_paths[set_name] = out_overview
 
     # --------------------------------------------------
-    # 4. Summary
+    # 4. Generate set-level avg SQI plots
+    # --------------------------------------------------
+    print("\n[POST] Generating set-level avg SQI plots (requires >=3 successful FOVs/set) ...")
+
+    avg_distribution_paths = {}
+    avg_sanity_paths = {}
+    success_by_set = defaultdict(list)
+    for entry in successful_entries:
+        success_by_set[entry["set_name"]].append(entry)
+
+    for set_name, set_entries in success_by_set.items():
+        if len(set_entries) < 3:
+            print(f"  [SKIP] {set_name}: only {len(set_entries)} successful FOV(s) (<3)")
+            continue
+
+        _, set_out_root = get_set_roots(
+            args.cache_root, args.out_root, set_name, use_set_subdirs
+        )
+        set_out_root = Path(set_out_root)
+
+        fov_logs = []
+        real_logs = []
+        null_logs = []
+
+        for entry in set_entries:
+            fov_out = set_out_root / entry["fov_id"]
+
+            sqi_csv = fov_out / "sqi_per_cell.csv"
+            sqi_log = _load_log10_sqi_from_csv(sqi_csv)
+            if len(sqi_log) > 0:
+                fov_logs.append(sqi_log)
+
+            sanity_json = fov_out / "sqi_sanity_values.json"
+            real_log, null_log = _load_log10_sanity_from_json(sanity_json)
+            if len(real_log) > 0 and len(null_log) > 0:
+                real_logs.append(real_log)
+                null_logs.append(null_log)
+
+        if len(fov_logs) >= 3:
+            dist_avg_out = set_out_root / "sqi_distribution_avg.png"
+            if _save_set_distribution_avg(dist_avg_out, set_name, fov_logs):
+                avg_distribution_paths[set_name] = dist_avg_out
+        else:
+            print(f"  [SKIP] {set_name}: insufficient SQI distributions for avg plot")
+
+        if len(real_logs) >= 3 and len(null_logs) >= 3:
+            sanity_avg_out = set_out_root / "sqi_sanity_check_avg.png"
+            if _save_set_sanity_avg(sanity_avg_out, set_name, real_logs, null_logs):
+                avg_sanity_paths[set_name] = sanity_avg_out
+        else:
+            print(f"  [SKIP] {set_name}: insufficient sanity values for avg plot")
+
+    # --------------------------------------------------
+    # 5. Summary
     # --------------------------------------------------
     print("\n" + "=" * 60)
     print(f"Batch complete: {n_pick - len(failed)}/{n_pick} succeeded")
@@ -334,11 +576,19 @@ def main():
     else:
         only_set = next(iter(overview_paths))
         print(f"  Tissue overview: {overview_paths[only_set]}")
+    if avg_distribution_paths:
+        print("  Set SQI distribution avg plots:")
+        for set_name in sorted(avg_distribution_paths):
+            print(f"    {set_name}: {avg_distribution_paths[set_name]}")
+    if avg_sanity_paths:
+        print("  Set SQI sanity avg plots:")
+        for set_name in sorted(avg_sanity_paths):
+            print(f"    {set_name}: {avg_sanity_paths[set_name]}")
     print("=" * 60)
 
     # Collect AUCs from summaries
     aucs = {}
-    for entry in selected:
+    for entry in successful_entries:
         set_name = entry["set_name"]
         fov_id = entry["fov_id"]
         label = run_label(set_name, fov_id, use_set_subdirs)

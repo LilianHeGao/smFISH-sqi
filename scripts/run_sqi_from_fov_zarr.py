@@ -325,6 +325,17 @@ def main(args):
     }
 
     (out_dir / "sqi_summary.json").write_text(json.dumps(summary, indent=2))
+    (out_dir / "sqi_sanity_values.json").write_text(
+        json.dumps(
+            {
+                "fov_id": fov_id,
+                "real_sqi": [float(v) for v in real_vals_sc.tolist()],
+                "null_sqi": [float(v) for v in null_vals_sc.tolist()],
+                "sanity_auc": float(sanity_auc) if np.isfinite(sanity_auc) else None,
+            },
+            indent=2,
+        )
+    )
 
     # Per-cell CSV (total SQI)
     with open(out_dir / "sqi_per_cell.csv", "w", newline="") as f:

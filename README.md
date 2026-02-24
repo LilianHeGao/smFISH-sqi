@@ -129,6 +129,13 @@ Each FOV produces a self-contained QC report:
 | `sqi_distribution.png` | log₁₀(SQI) histograms per channel + total |
 | `sqi_sanity_check.png` | Real vs null SQI distribution overlay |
 
+When running `run_batch_fovs.py`, each set also gets set-level aggregate plots if there are at least 3 successful FOVs:
+
+| File | What it is |
+|------|------------|
+| `sqi_distribution_avg.png` | Mean density of per-FOV log₁₀(SQI) distributions for the whole set |
+| `sqi_sanity_check_avg.png` | Mean density of per-FOV real/null log₁₀(SQI) sanity distributions for the whole set |
+
 ### sqi_summary.json
 
 ```json
