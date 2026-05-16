@@ -89,7 +89,7 @@ python scripts\run_sqi_from_fov_zarr.py ^
 ```
 
 ### Run a batch
-Run a batch randomly selects `n_fovs` FOVs from the data folder and runs the full SQI pipeline independently on each.
+Run a batch randomly selects a total of `n_fovs` FOVs from ALL of the specified data folders and runs the full SQI pipeline independently on each.
 
 ```bash
 python scripts\run_batch_fovs.py ^
