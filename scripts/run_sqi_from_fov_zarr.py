@@ -9,10 +9,12 @@ python scripts/run_sqi_from_fov_zarr.py \
   --cache_root /cache \
   --out_root   /output
 """
+import os
+os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")  # prevent OpenMP double-init on Windows
+
 import argparse
 import csv
 import json
-import os
 from pathlib import Path
 
 import numpy as np

@@ -5,7 +5,11 @@ with all selected FOVs highlighted.
 
 Called by run_batch_fovs.bat.
 """
+import os
+os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")  # prevent OpenMP double-init on Windows
+
 import argparse
+import concurrent.futures
 import csv
 import glob
 import json
@@ -333,6 +337,49 @@ def _save_set_sanity_avg(
     return True
 
 
+def _detect_parallelism() -> tuple[int, str]:
+    """Return (n_workers, description) based on detected hardware."""
+    try:
+        import torch
+        if torch.cuda.is_available():
+            n = torch.cuda.device_count()
+            return n, f"{n}× CUDA GPU — 1 worker/GPU to avoid VRAM contention"
+    except ImportError:
+        pass
+    cpu = os.cpu_count() or 1
+    w = max(1, min(4, cpu // 2))
+    return w, f"CPU-only ({cpu} logical cores) → {w} workers"
+
+
+def _run_fov_job(
+    py: str,
+    script: str,
+    entry: dict,
+    set_cache_root: str,
+    set_out_root: str,
+    extra_flags: list[str],
+    log_path: Path,
+    label: str,
+    idx: int,
+    total: int,
+) -> bool:
+    """Run the single-FOV pipeline in a subprocess, logging to log_path."""
+    cmd = [
+        py, script,
+        "--fov_zarr", entry["fov_zarr"],
+        "--data_fld", entry["data_fld"],
+        "--cache_root", set_cache_root,
+        "--out_root", set_out_root,
+        *extra_flags,
+    ]
+    print(f"[{idx}/{total}] START  {label}  → {log_path.name}")
+    with open(log_path, "w") as log:
+        rc = subprocess.run(cmd, stdout=log, stderr=subprocess.STDOUT).returncode
+    tag = "OK  " if rc == 0 else "FAIL"
+    print(f"[{idx}/{total}] {tag}  {label}")
+    return rc == 0
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Batch SQI: auto-discover FOVs, run pipeline, generate tissue overview",
@@ -374,6 +421,12 @@ def main():
              "Use test_mosaic_orientation.py to pick the right value.",
     )
     parser.add_argument("--force", action="store_true")
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=0,
+        help="Parallel FOV workers (0 = auto-detect from GPU/CPU, default: 0)",
+    )
     args = parser.parse_args()
 
     random.seed(args.seed)
@@ -404,53 +457,77 @@ def main():
     print("=" * 60)
 
     # --------------------------------------------------
-    # 2. Run pipeline on each FOV
+    # 2. Detect parallelism + pre-warm shared mosaic caches
     # --------------------------------------------------
+    if args.workers > 0:
+        n_workers = args.workers
+        hw_desc = "user-specified"
+    else:
+        n_workers, hw_desc = _detect_parallelism()
+    n_workers = min(n_workers, n_pick)
+
+    print(f"\n[ENV] {hw_desc}  →  {n_workers} parallel worker(s)")
+
+    # Build mosaic caches up-front so parallel workers only read, never write.
+    print("[PRE] Warming shared mosaic caches ...")
+    seen_data_flds: dict[str, tuple[str, str]] = {}
+    for entry in selected:
+        dfld = entry["data_fld"]
+        if dfld not in seen_data_flds:
+            sn = entry["set_name"]
+            scr, _ = get_set_roots(args.cache_root, args.out_root, sn, use_set_subdirs)
+            seen_data_flds[dfld] = (scr, sn)
+
+    for dfld, (scr, sn) in seen_data_flds.items():
+        mosaic_cfg = MosaicBuildConfig(resc=args.resc, rot_k=args.rot_k)
+        build_mosaic_and_coords(dfld, mosaic_cfg, cache_root=scr, cache=True)
+        print(f"  [OK] mosaic ready: {sn}")
+
+    # --------------------------------------------------
+    # 3. Run pipeline on each FOV (parallel)
+    # --------------------------------------------------
+    logs_dir = out_root / "logs"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+
+    script_path = str(Path(__file__).parent / "run_sqi_from_fov_zarr.py")
+    extra_flags = ["--resc", str(args.resc), "--rot_k", str(args.rot_k)]
+    if args.force:
+        extra_flags.append("--force")
+
     failed = []
     successful_entries = []
-    for i, entry in enumerate(selected):
-        set_name = entry["set_name"]
-        data_fld = entry["data_fld"]
-        fov_zarr = entry["fov_zarr"]
-        fov_id = entry["fov_id"]
-        label = run_label(set_name, fov_id, use_set_subdirs)
 
-        print(f"\n[{i + 1}/{n_pick}] Processing FOV {label} ...")
+    print(f"\n[RUN] Processing {n_pick} FOV(s) with {n_workers} worker(s) ...")
+    print(f"      Per-FOV logs → {logs_dir}\n")
 
-        set_cache_root, set_out_root = get_set_roots(
-            args.cache_root, args.out_root, set_name, use_set_subdirs
-        )
-        Path(set_out_root).mkdir(parents=True, exist_ok=True)
+    futures: dict[concurrent.futures.Future, dict] = {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=n_workers) as pool:
+        for i, entry in enumerate(selected):
+            sn = entry["set_name"]
+            fov_id = entry["fov_id"]
+            label = run_label(sn, fov_id, use_set_subdirs)
+            scr, sor = get_set_roots(args.cache_root, args.out_root, sn, use_set_subdirs)
+            Path(sor).mkdir(parents=True, exist_ok=True)
+            log_path = logs_dir / f"{sn}_{fov_id}.log"
+            f = pool.submit(
+                _run_fov_job,
+                sys.executable, script_path,
+                entry, scr, sor, extra_flags,
+                log_path, label, i + 1, n_pick,
+            )
+            futures[f] = entry
 
-        cmd = [
-            sys.executable,
-            "scripts/run_sqi_from_fov_zarr.py",
-            "--fov_zarr",
-            fov_zarr,
-            "--data_fld",
-            data_fld,
-            "--cache_root",
-            set_cache_root,
-            "--out_root",
-            set_out_root,
-            "--resc",
-            str(args.resc),
-            "--rot_k",
-            str(args.rot_k),
-        ]
-        if args.force:
-            cmd.append("--force")
-
-        result = subprocess.run(cmd)
-        if result.returncode != 0:
-            print(f"[ERROR] FOV {label} failed!")
-            failed.append(label)
-        else:
-            print(f"[OK] FOV {label} done.")
-            successful_entries.append(entry)
+        for future in concurrent.futures.as_completed(futures):
+            entry = futures[future]
+            ok = future.result()
+            if ok:
+                successful_entries.append(entry)
+            else:
+                label = run_label(entry["set_name"], entry["fov_id"], use_set_subdirs)
+                failed.append(label)
 
     # --------------------------------------------------
-    # 3. Generate tissue overview(s)
+    # 4. Generate tissue overview(s)
     # --------------------------------------------------
     print("\n[POST] Generating tissue overview(s) ...")
 
@@ -509,7 +586,7 @@ def main():
         overview_paths[set_name] = out_overview
 
     # --------------------------------------------------
-    # 4. Generate set-level avg SQI plots
+    # 5. Generate set-level avg SQI plots
     # --------------------------------------------------
     print("\n[POST] Generating set-level avg SQI plots (requires >=3 successful FOVs/set) ...")
 
@@ -562,13 +639,14 @@ def main():
             print(f"  [SKIP] {set_name}: insufficient sanity values for avg plot")
 
     # --------------------------------------------------
-    # 5. Summary
+    # 6. Summary
     # --------------------------------------------------
     print("\n" + "=" * 60)
-    print(f"Batch complete: {n_pick - len(failed)}/{n_pick} succeeded")
+    print(f"Batch complete: {n_pick - len(failed)}/{n_pick} succeeded  [{n_workers} worker(s)]")
     if failed:
         print(f"  Failed: {failed}")
     print(f"  Output root: {out_root}")
+    print(f"  Per-FOV logs: {logs_dir}")
     if use_set_subdirs:
         print("  Tissue overviews:")
         for set_name in sorted(overview_paths):

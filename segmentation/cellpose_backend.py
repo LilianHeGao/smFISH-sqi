@@ -26,10 +26,23 @@ class CellposeBackend:
     @staticmethod
     def _auto_gpu() -> bool:
         try:
+            import torch
+            return torch.cuda.is_available()
+        except ImportError:
+            pass
+        try:
             from cellpose import core
             return bool(core.use_gpu())
         except Exception:
             return False
+
+    @staticmethod
+    def _cp_major() -> int:
+        try:
+            import cellpose as _cp
+            return int(_cp.__version__.split(".")[0])
+        except Exception:
+            return 3
 
     def _get_model(self):
         if self._model is not None:
@@ -42,8 +55,11 @@ class CellposeBackend:
 
         self._resolved_gpu = use_gpu
 
+        # models.Cellpose is the stable high-level wrapper that respects
+        # model_type in both v3 and v4 (unlike CellposeModel which ignores
+        # model_type in v4+ and silently loads cyto3 instead).
         from cellpose import models
-        self._model = models.CellposeModel(
+        self._model = models.Cellpose(
             gpu=use_gpu,
             model_type=self.cfg.model_type,
         )
@@ -57,15 +73,18 @@ class CellposeBackend:
 
         img_f = img.astype(np.float32, copy=False)
 
-        out = model.eval(
-            img_f,
+        eval_kwargs: dict = dict(
             diameter=self.cfg.diameter,
-            channels=self.cfg.channels,
             flow_threshold=self.cfg.flow_threshold,
             cellprob_threshold=self.cfg.cellprob_threshold,
             stitch_threshold=self.cfg.stitch_threshold,
             batch_size=self.cfg.batch_size,
         )
+        # channels parameter removed in v4+ for grayscale images
+        if self._cp_major() < 4:
+            eval_kwargs["channels"] = list(self.cfg.channels)
+
+        out = model.eval(img_f, **eval_kwargs)
 
         # Cellpose v3: (masks, flows, styles, diams)
         # Cellpose v4+: (masks, flows, styles)
