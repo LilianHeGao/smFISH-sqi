@@ -54,6 +54,9 @@ Everything runs from a single script. Intermediate results are cached.
 ## 🚀 Quickstart
 
 ```bash
+git clone https://github.com/LilianHeGao/merfish-sqi.git
+cd merfish-sqi
+
 conda create -n sqi python=3.11 -y && conda activate sqi
 python -m pip install --upgrade pip setuptools wheel
 pip install -e .

@@ -6,6 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "merfish-sqi"
 version = "0.1.0"
 requires-python = ">=3.9"
+description = "Sample Quality Index (SQI) for smFISH spatial transcriptomics"
 dependencies = [
   "numpy",
   "scipy",
@@ -20,6 +21,10 @@ dependencies = [
   "pandas",
   "pyarrow",
 ]
+
+[project.urls]
+Homepage = "https://github.com/LilianHeGao/merfish-sqi"
+Repository = "https://github.com/LilianHeGao/merfish-sqi"
 
 [project.optional-dependencies]
 napari = ["napari"]
