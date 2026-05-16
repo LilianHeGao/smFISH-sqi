@@ -24,6 +24,7 @@ import numpy as np
 import tifffile as tiff
 
 from sqi.io.image_io import read_multichannel_from_conv_zarr
+from sqi.qc.metrics import mann_whitney_auc
 from sqi.qc.mosaic_coords import (
     build_mosaic_and_coords,
     build_fov_anchor_index,
@@ -222,15 +223,6 @@ def _density_stack(arrays: list[np.ndarray], bins: np.ndarray) -> np.ndarray | N
     return np.vstack(rows)
 
 
-def _mann_whitney_auc(real_log: np.ndarray, null_log: np.ndarray) -> float:
-    if len(real_log) < 5 or len(null_log) < 5:
-        return float("nan")
-    u = 0.0
-    for r in real_log:
-        u += np.sum(r > null_log) + 0.5 * np.sum(r == null_log)
-    return float(u / (len(real_log) * len(null_log)))
-
-
 def _save_set_distribution_avg(
     out_path: Path,
     set_name: str,
@@ -304,7 +296,7 @@ def _save_set_sanity_avg(
 
     pooled_real = np.concatenate(real_logs)
     pooled_null = np.concatenate(null_logs)
-    auc = _mann_whitney_auc(pooled_real, pooled_null)
+    auc = mann_whitney_auc(pooled_real, pooled_null)
     auc_txt = f"{auc:.3f}" if np.isfinite(auc) else "N/A"
 
     fig, ax = plt.subplots(figsize=(6, 4))
@@ -427,6 +419,12 @@ def main():
         default=0,
         help="Parallel FOV workers (0 = auto-detect from GPU/CPU, default: 0)",
     )
+    parser.add_argument(
+        "--hq-percentile",
+        type=float,
+        default=0.8,
+        help="q_score percentile cutoff for HQ-spot pass test (default: 0.8 = top 20%%)",
+    )
     args = parser.parse_args()
 
     random.seed(args.seed)
@@ -490,7 +488,11 @@ def main():
     logs_dir.mkdir(parents=True, exist_ok=True)
 
     script_path = str(Path(__file__).parent / "run_sqi_from_fov_zarr.py")
-    extra_flags = ["--resc", str(args.resc), "--rot_k", str(args.rot_k)]
+    extra_flags = [
+        "--resc", str(args.resc),
+        "--rot_k", str(args.rot_k),
+        "--hq-percentile", str(args.hq_percentile),
+    ]
     if args.force:
         extra_flags.append("--force")
 
@@ -665,7 +667,7 @@ def main():
     print("=" * 60)
 
     # Collect AUCs from summaries
-    aucs = {}
+    fov_metrics: dict[str, dict] = {}
     for entry in successful_entries:
         set_name = entry["set_name"]
         fov_id = entry["fov_id"]
@@ -678,15 +680,33 @@ def main():
         if summary_path.exists():
             with open(summary_path) as f:
                 data = json.load(f)
-            aucs[label] = data.get("sanity_auc")
+            fov_metrics[label] = {
+                "sanity_auc": data.get("sanity_auc"),
+                "hq_auc": data.get("hq_auc"),
+                "hq_pass": data.get("hq_pass"),
+            }
 
-    if aucs:
+    if fov_metrics:
         print("\nSanity-check AUCs:")
-        for label in sorted(aucs):
-            auc = aucs[label]
-            status = "OK" if auc is not None and auc >= 0.6 else "WARN"
-            auc_str = f"{auc:.3f}" if auc is not None else "N/A"
-            print(f"  FOV {label}: AUC={auc_str}  [{status}]")
+        for label in sorted(fov_metrics):
+            m = fov_metrics[label]
+            auc = m["sanity_auc"]
+            hq_auc = m["hq_auc"]
+            hq_pass = m["hq_pass"]
+
+            auc_str = f"{auc:.3f}" if auc is not None else " N/A "
+            auc_tag = "OK  " if auc is not None and auc >= 0.6 else "WARN"
+
+            if hq_auc is not None:
+                hq_str = f"{hq_auc:.3f}"
+                hq_tag = "PASS" if hq_pass else "FAIL"
+            elif hq_pass is None:
+                hq_str, hq_tag = " N/A ", "SKIP"
+            else:
+                hq_str, hq_tag = " N/A ", "FAIL"
+
+            print(f"  FOV {label}: AUC={auc_str} [{auc_tag}]   "
+                  f"HQ-AUC={hq_str} [{hq_tag}]")
 
 
 if __name__ == "__main__":

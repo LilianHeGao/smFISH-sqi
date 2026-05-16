@@ -49,10 +49,15 @@ def plot_sqi_real_vs_null(
     real_sqi: Dict[int, float],
     null_sqi: Dict[int, float],
     *,
+    hq_sqi: Optional[Dict[int, float]] = None,
+    hq_pct: float = 0.8,
     ax: Optional[plt.Axes] = None,
     title: Optional[str] = None,
 ):
-    """Overlay real vs null log10(SQI) histograms for sanity check."""
+    """Overlay real vs null log10(SQI) histograms for sanity check.
+
+    If hq_sqi is provided, a third step-histogram for HQ-spot SQI is overlaid.
+    """
     def _to_log(d):
         v = np.array(list(d.values()), dtype=float)
         v = v[np.isfinite(v) & (v > 0)]
@@ -60,15 +65,20 @@ def plot_sqi_real_vs_null(
 
     real_log = _to_log(real_sqi)
     null_log = _to_log(null_sqi)
+    hq_log = _to_log(hq_sqi) if hq_sqi else np.array([])
 
     if ax is None:
         _, ax = plt.subplots(figsize=(5, 3.5))
 
-    all_vals = np.concatenate([real_log, null_log]) if (len(real_log) + len(null_log)) else np.array([0.0])
+    parts = [a for a in (real_log, null_log, hq_log) if len(a) > 0]
+    all_vals = np.concatenate(parts) if parts else np.array([0.0])
     bins = np.linspace(all_vals.min() - 0.3, all_vals.max() + 0.3, 50)
 
     ax.hist(null_log, bins=bins, alpha=0.55, color="tab:gray", label="null (uniform)")
-    ax.hist(real_log, bins=bins, alpha=0.55, color="tab:blue", label="real")
+    ax.hist(real_log, bins=bins, alpha=0.55, color="tab:blue", label="real (all)")
+    if len(hq_log) > 0:
+        ax.hist(hq_log, bins=bins, histtype="step", linewidth=1.8,
+                color="tab:orange", linestyle=":", label=f"HQ top {1 - hq_pct:.0%} spots")
     ax.axvline(0, ls="--", color="k", lw=0.8)
     ax.set_xlabel("log10(SQI)")
     ax.set_ylabel("Cell count")

@@ -1,6 +1,19 @@
 import numpy as np
 
 
+def mann_whitney_auc(real: np.ndarray, null: np.ndarray) -> float:
+    """Mann-Whitney AUC between two 1-D float arrays (e.g. log10 SQI).
+
+    Returns nan if either array has fewer than 5 values.
+    """
+    if len(real) < 5 or len(null) < 5:
+        return float("nan")
+    u = 0.0
+    for r in real:
+        u += np.sum(r > null) + 0.5 * np.sum(r == null)
+    return float(u / (len(real) * len(null)))
+
+
 def compute_sqi_from_label_maps(
     fg_label_map: np.ndarray,
     bg_label_map: np.ndarray,
@@ -131,22 +144,8 @@ def sqi_sanity_check(
     )
 
     # --- AUC: Mann-Whitney U between log10 real vs null ---
-    real_log = np.array([
-        np.log10(v) for v in real_sqi.values()
-        if np.isfinite(v) and v > 0
-    ])
-    null_log = np.array([
-        np.log10(v) for v in null_sqi.values()
-        if np.isfinite(v) and v > 0
-    ])
-
-    if len(real_log) < 5 or len(null_log) < 5:
-        auc = np.nan
-    else:
-        # Mann-Whitney U (no sklearn)
-        u = 0.0
-        for r in real_log:
-            u += np.sum(r > null_log) + 0.5 * np.sum(r == null_log)
-        auc = u / (len(real_log) * len(null_log))
+    real_log = np.array([np.log10(v) for v in real_sqi.values() if np.isfinite(v) and v > 0])
+    null_log = np.array([np.log10(v) for v in null_sqi.values() if np.isfinite(v) and v > 0])
+    auc = mann_whitney_auc(real_log, null_log)
 
     return real_sqi, null_sqi, auc

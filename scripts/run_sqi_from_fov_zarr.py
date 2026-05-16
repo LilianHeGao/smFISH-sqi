@@ -311,6 +311,66 @@ def main(args):
         print(f"WARNING: FG/BG separation insufficient for this FOV "
               f"(AUC={sanity_auc:.2f}), SQI may not be informative.")
 
+    # --- HQ-spot test: per-channel, then overall ---
+    # For each channel, filter to top (1-hq_pct) spots by q_score, regenerate
+    # a null at that sparsity via sqi_sanity_check, compute AUC.
+    _HQ_MIN = 20
+    _hq_pct = args.hq_percentile
+
+    def _hq_spots_int(df):
+        return np.column_stack([
+            np.clip(df["row"].values.astype(np.int32), 0, fg_label_map.shape[0] - 1),
+            np.clip(df["col"].values.astype(np.int32), 0, fg_label_map.shape[1] - 1),
+        ])
+
+    hq_per_channel = {}
+    for ch in channels:
+        ch_df = spots_pass[spots_pass["channel"] == ch]
+        if len(ch_df) < _HQ_MIN:
+            hq_per_channel[int(ch)] = {
+                "hq_auc": None, "hq_pass": None,
+                "n_hq": len(ch_df), "reason": "low_spot_count",
+            }
+            continue
+        q_thresh = float(np.percentile(ch_df["q_score"].values, _hq_pct * 100))
+        hq_ch = ch_df[ch_df["q_score"] >= q_thresh]
+        if len(hq_ch) < _HQ_MIN:
+            hq_per_channel[int(ch)] = {
+                "hq_auc": None, "hq_pass": None,
+                "n_hq": len(hq_ch), "reason": "low_spot_count",
+            }
+            continue
+        _, _, hq_auc_ch = sqi_sanity_check(
+            fg_label_map, bg_label_map, _hq_spots_int(hq_ch),
+            hq_ch["q_score"].values.astype(np.float32),
+        )
+        hq_pass_ch = bool(np.isfinite(hq_auc_ch) and hq_auc_ch >= 0.60)
+        hq_per_channel[int(ch)] = {
+            "hq_auc": float(hq_auc_ch) if np.isfinite(hq_auc_ch) else None,
+            "hq_pass": hq_pass_ch, "n_hq": len(hq_ch), "reason": None,
+        }
+        print(f"       ch{ch} HQ(top {1 - _hq_pct:.0%}): "
+              f"n={len(hq_ch)}, AUC={hq_auc_ch:.3f}  "
+              f"[{'PASS' if hq_pass_ch else 'FAIL'}]")
+
+    # Overall HQ (all channels pooled, threshold computed globally)
+    q_thresh_all = float(np.percentile(spots_pass["q_score"].values, _hq_pct * 100))
+    hq_all = spots_pass[spots_pass["q_score"] >= q_thresh_all]
+    if len(hq_all) >= _HQ_MIN:
+        hq_real_sqi_sc, _, hq_auc = sqi_sanity_check(
+            fg_label_map, bg_label_map, _hq_spots_int(hq_all),
+            hq_all["q_score"].values.astype(np.float32),
+        )
+        hq_pass = bool(np.isfinite(hq_auc) and hq_auc >= 0.60)
+        print(f"       overall HQ(top {1 - _hq_pct:.0%}): "
+              f"n={len(hq_all)}, AUC={hq_auc:.3f}  "
+              f"[{'PASS' if hq_pass else 'FAIL'}]")
+    else:
+        hq_real_sqi_sc = {}
+        hq_auc = float("nan")
+        hq_pass = None
+        print(f"       overall HQ: skipped (only {len(hq_all)} spots < {_HQ_MIN})")
+
     # --- Save results ---
     vals = np.array([v for v in sqi_total.values() if np.isfinite(v) and v > 0])
     summary = {
@@ -323,6 +383,10 @@ def main(args):
         "mean_log10_sqi": float(np.mean(np.log10(vals))) if len(vals) else None,
         "sanity_auc": float(sanity_auc) if np.isfinite(sanity_auc) else None,
         "sqi_reliable": sqi_reliable,
+        "hq_percentile": _hq_pct,
+        "hq_auc": float(hq_auc) if np.isfinite(hq_auc) else None,
+        "hq_pass": hq_pass,
+        "hq_per_channel": hq_per_channel,
         "per_channel": per_ch_sqi,
     }
 
@@ -391,10 +455,15 @@ def main(args):
     fig.savefig(str(out_dir / "sqi_distribution.png"), dpi=200)
     plt.close(fig)
 
-    # Sanity check plot: real vs null
+    # Sanity check plot: real vs null (+ HQ overlay if available)
     fig_sc, ax_sc = plt.subplots(figsize=(5, 3.5))
-    plot_sqi_real_vs_null(real_sqi_sc, null_sqi_sc, ax=ax_sc,
-                          title=f"SQI sanity check — FOV {fov_id}")
+    plot_sqi_real_vs_null(
+        real_sqi_sc, null_sqi_sc,
+        hq_sqi=hq_real_sqi_sc if hq_real_sqi_sc else None,
+        hq_pct=_hq_pct,
+        ax=ax_sc,
+        title=f"SQI sanity check — FOV {fov_id}",
+    )
     fig_sc.tight_layout()
     fig_sc.savefig(str(out_dir / "sqi_sanity_check.png"), dpi=200)
     plt.close(fig_sc)
@@ -445,4 +514,8 @@ if __name__ == "__main__":
                         help="Tile rotation for mosaic: np.rot90 k (0-3, default: 2)")
     parser.add_argument("--force", action="store_true",
                         help="Recompute all cached intermediates")
+    parser.add_argument(
+        "--hq-percentile", type=float, default=0.8,
+        help="q_score percentile cutoff for the HQ-spot test (default: 0.8 = top 20%%)",
+    )
     main(parser.parse_args())
