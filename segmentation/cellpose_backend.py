@@ -55,11 +55,10 @@ class CellposeBackend:
 
         self._resolved_gpu = use_gpu
 
-        # models.Cellpose is the stable high-level wrapper that respects
-        # model_type in both v3 and v4 (unlike CellposeModel which ignores
-        # model_type in v4+ and silently loads cyto3 instead).
+        # models.Cellpose was removed in Cellpose 3+; CellposeModel is the
+        # only entry point and correctly respects model_type in v3/v4.
         from cellpose import models
-        self._model = models.Cellpose(
+        self._model = models.CellposeModel(
             gpu=use_gpu,
             model_type=self.cfg.model_type,
         )
