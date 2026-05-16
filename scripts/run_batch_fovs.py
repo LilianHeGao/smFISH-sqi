@@ -666,7 +666,7 @@ def main():
             print(f"    {set_name}: {avg_sanity_paths[set_name]}")
     print("=" * 60)
 
-    # Collect AUCs from summaries
+    # Collect metrics from each FOV's sqi_summary.json
     fov_metrics: dict[str, dict] = {}
     for entry in successful_entries:
         set_name = entry["set_name"]
@@ -677,15 +677,25 @@ def main():
             args.cache_root, args.out_root, set_name, use_set_subdirs
         )
         summary_path = Path(set_out_root) / fov_id / "sqi_summary.json"
-        if summary_path.exists():
-            with open(summary_path) as f:
-                data = json.load(f)
-            fov_metrics[label] = {
-                "sanity_auc": data.get("sanity_auc"),
-                "hq_auc": data.get("hq_auc"),
-                "hq_pass": data.get("hq_pass"),
-            }
+        if not summary_path.exists():
+            continue
+        with open(summary_path) as f:
+            data = json.load(f)
+        fov_metrics[label] = {
+            "set_name": set_name,
+            "fov_id": fov_id,
+            "set_out_root": set_out_root,
+            "median_sqi": data.get("median_sqi"),
+            "mean_log10_sqi": data.get("mean_log10_sqi"),
+            "n_cells_with_sqi": data.get("n_cells_with_sqi"),
+            "n_spots_pass": data.get("n_spots_pass"),
+            "sanity_auc": data.get("sanity_auc"),
+            "sqi_reliable": data.get("sqi_reliable"),
+            "hq_auc": data.get("hq_auc"),
+            "hq_pass": data.get("hq_pass"),
+        }
 
+    # Print AUC table
     if fov_metrics:
         print("\nSanity-check AUCs:")
         for label in sorted(fov_metrics):
@@ -707,6 +717,62 @@ def main():
 
             print(f"  FOV {label}: AUC={auc_str} [{auc_tag}]   "
                   f"HQ-AUC={hq_str} [{hq_tag}]")
+
+    # Write per-set CSV summaries
+    _CSV_COLS_SET = [
+        "fov_id", "median_sqi", "mean_log10_sqi", "n_cells_with_sqi",
+        "n_spots_pass", "sanity_auc", "sqi_reliable", "hq_auc", "hq_pass",
+    ]
+    _CSV_COLS_ALL = ["set_name"] + _CSV_COLS_SET
+
+    rows_by_set: dict[str, list[dict]] = defaultdict(list)
+    for m in fov_metrics.values():
+        rows_by_set[m["set_name"]].append(m)
+
+    print()
+    for set_name, rows in rows_by_set.items():
+        _, set_out_root = get_set_roots(
+            args.cache_root, args.out_root, set_name, use_set_subdirs
+        )
+        csv_path = Path(set_out_root) / "sqi_batch_summary.csv"
+        rows_sorted = sorted(rows, key=lambda r: r["fov_id"])
+        with open(csv_path, "w", newline="") as f:
+            w = csv.DictWriter(f, fieldnames=_CSV_COLS_SET, extrasaction="ignore")
+            w.writeheader()
+            w.writerows(rows_sorted)
+        print(f"  [CSV] {set_name}: {csv_path}")
+
+    # Combined CSV at out_root: one row per set, mean across FOVs
+    def _mean(vals):
+        vals = [v for v in vals if v is not None and np.isfinite(float(v))]
+        return round(float(np.mean(vals)), 4) if vals else None
+
+    _CSV_COLS_COMBINED = [
+        "set_name", "n_fovs",
+        "mean_median_sqi", "mean_log10_sqi",
+        "mean_sanity_auc", "n_sqi_reliable",
+        "mean_hq_auc", "n_hq_pass",
+    ]
+    combined_rows = []
+    for set_name in sorted(rows_by_set):
+        rows = rows_by_set[set_name]
+        combined_rows.append({
+            "set_name": set_name,
+            "n_fovs": len(rows),
+            "mean_median_sqi":  _mean([r["median_sqi"]    for r in rows]),
+            "mean_log10_sqi":   _mean([r["mean_log10_sqi"] for r in rows]),
+            "mean_sanity_auc":  _mean([r["sanity_auc"]     for r in rows]),
+            "n_sqi_reliable":   sum(1 for r in rows if r["sqi_reliable"]),
+            "mean_hq_auc":      _mean([r["hq_auc"]         for r in rows]),
+            "n_hq_pass":        sum(1 for r in rows if r["hq_pass"]),
+        })
+
+    combined_csv = out_root / "sqi_batch_summary.csv"
+    with open(combined_csv, "w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=_CSV_COLS_COMBINED)
+        w.writeheader()
+        w.writerows(combined_rows)
+    print(f"  [CSV] combined: {combined_csv}")
 
 
 if __name__ == "__main__":
